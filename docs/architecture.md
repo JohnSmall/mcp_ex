@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Planning
+- **Status**: Phase 1 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -40,19 +40,66 @@ Host Application
 
 ---
 
-## 2. Planned Module Map
+## 2. Module Map
 
 ```
 lib/mcp/
-  # === Core Protocol ===
+  # === Core Protocol (Phase 1 - COMPLETE) ===
   protocol.ex                        # JSON-RPC 2.0 encoding/decoding
   protocol/
-    types.ex                         # All MCP type structs (Tool, Resource, Prompt, Content, etc.)
-    messages.ex                      # Request/response/notification structs per MCP method
-    capabilities.ex                  # ClientCapabilities, ServerCapabilities
     error.ex                         # MCP error codes + JSON-RPC errors
+    methods.ex                       # Method name constants
+    types/
+      tool.ex                        # Tool struct
+      tool_annotations.ex            # ToolAnnotations struct
+      resource.ex                    # Resource struct
+      resource_template.ex           # ResourceTemplate struct
+      resource_contents.ex           # ResourceContents struct
+      prompt.ex                      # Prompt struct
+      prompt_argument.ex             # PromptArgument struct
+      prompt_message.ex              # PromptMessage struct
+      sampling_message.ex            # SamplingMessage struct
+      model_preferences.ex           # ModelPreferences struct
+      model_hint.ex                  # ModelHint struct
+      root.ex                        # Root struct
+      implementation.ex              # Implementation struct (client/server info)
+      annotations.ex                 # Content Annotations struct
+      icon.ex                        # Icon struct
+      content.ex                     # Content type dispatcher
+      content/
+        text_content.ex              # TextContent struct
+        image_content.ex             # ImageContent struct
+        audio_content.ex             # AudioContent struct
+        embedded_resource.ex         # EmbeddedResource struct
+        resource_link.ex             # ResourceLink struct
+    capabilities/
+      server_capabilities.ex         # ServerCapabilities struct
+      client_capabilities.ex         # ClientCapabilities struct
+      tool_capabilities.ex           # ToolCapabilities struct
+      resource_capabilities.ex       # ResourceCapabilities struct
+      prompt_capabilities.ex         # PromptCapabilities struct
+      logging_capabilities.ex        # LoggingCapabilities struct
+      completion_capabilities.ex     # CompletionCapabilities struct
+      sampling_capabilities.ex       # SamplingCapabilities struct
+      root_capabilities.ex           # RootCapabilities struct
+      elicitation_capabilities.ex    # ElicitationCapabilities struct
+    messages/
+      request.ex                     # JSON-RPC Request struct
+      response.ex                    # JSON-RPC Response struct
+      notification.ex                # JSON-RPC Notification struct
+      initialize.ex                  # Initialize Params + Result
+      ping.ex                        # Ping Params
+      tools.ex                       # Tools ListParams/ListResult/CallParams/CallResult
+      resources.ex                   # Resources List/Read/Subscribe/Templates types
+      prompts.ex                     # Prompts List/Get types
+      sampling.ex                    # Sampling CreateMessage Params/Result
+      roots.ex                       # Roots List Params/Result
+      elicitation.ex                 # Elicitation Params/Result
+      logging.ex                     # Logging SetLevel/Message types
+      completion.ex                  # Completion Params/Result
+      notifications.ex               # Progress/Cancelled/ResourceUpdated params
 
-  # === Transport Layer ===
+  # === Transport Layer (Phase 2 - PLANNED) ===
   transport.ex                       # Transport behaviour (connect, send, receive, close)
   transport/
     stdio.ex                         # Port-based stdin/stdout transport
@@ -60,18 +107,15 @@ lib/mcp/
       client.ex                      # HTTP POST + SSE client transport (Req)
       server.ex                      # HTTP POST + SSE server transport (Plug)
 
-  # === Client ===
+  # === Client (Phase 3 - PLANNED) ===
   client.ex                          # High-level client API (GenServer)
-  client/
-    session.ex                       # Session state machine (init → operation → shutdown)
-    request_registry.ex              # Tracks pending requests by ID for response matching
 
-  # === Server ===
+  # === Server (Phase 4 - PLANNED) ===
   server.ex                          # High-level server API (GenServer)
   server/
     handler.ex                       # Behaviour for tool/resource/prompt handlers
+    simple_handler.ex                # Convenience handler with in-state registration
     router.ex                        # Routes JSON-RPC method → handler
-    registry.ex                      # Stores registered tools, resources, prompts
 ```
 
 ---

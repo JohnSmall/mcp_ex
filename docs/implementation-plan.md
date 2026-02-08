@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Planning
+- **Status**: Phase 1 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -32,19 +32,19 @@ git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-con
 
 ### Tasks
 
-- [ ] **1.1** Create Mix project at `/workspace/mcp_ex`
+- [x] **1.1** Create Mix project at `/workspace/mcp_ex`
   - `mix new mcp_ex --sup`
   - Configure mix.exs with deps: jason, elixir_uuid, dialyxir, credo, ex_doc
   - Set Elixir >= 1.17, OTP >= 26
   - Application name `:mcp_ex`
 
-- [ ] **1.2** Define protocol error module (`lib/mcp/protocol/error.ex`)
+- [x] **1.2** Define protocol error module (`lib/mcp/protocol/error.ex`)
   - `MCP.Protocol.Error` struct: code, message, data
   - Standard JSON-RPC error codes: -32700 (parse), -32600 (invalid request), -32601 (method not found), -32602 (invalid params), -32603 (internal error)
   - MCP-specific codes: -32002 (resource not found), -32042 (URL elicitation required), -1 (user rejected sampling)
   - Constructor helpers: `parse_error/0`, `invalid_request/0`, `method_not_found/0`, `invalid_params/1`, `internal_error/1`
 
-- [ ] **1.3** Define core MCP type structs (`lib/mcp/protocol/types.ex`)
+- [x] **1.3** Define core MCP type structs (`lib/mcp/protocol/types/`)
   - `MCP.Protocol.Types.Tool` — name (required), title, description, inputSchema, outputSchema, annotations, icons
   - `MCP.Protocol.Types.Resource` — uri (required), name (required), title, description, mimeType, size, annotations, icons
   - `MCP.Protocol.Types.ResourceTemplate` — uriTemplate, name, title, description, mimeType, icons
@@ -63,19 +63,19 @@ git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-con
   - `Icon` — url, mediaType
   - JSON serialization: `to_map/1` and `from_map/1` for each type (snake_case internal, camelCase wire)
 
-- [ ] **1.4** Define capability structs (`lib/mcp/protocol/capabilities.ex`)
+- [x] **1.4** Define capability structs (`lib/mcp/protocol/capabilities/`)
   - `MCP.Protocol.Capabilities.ServerCapabilities` — tools, resources, prompts, logging, completions, experimental
   - `MCP.Protocol.Capabilities.ClientCapabilities` — roots, sampling, elicitation, experimental
   - Each sub-capability as a nested map (e.g., tools: %{listChanged: true})
   - `to_map/1` and `from_map/1` for wire format
 
-- [ ] **1.5** Define JSON-RPC message structs (`lib/mcp/protocol/messages.ex`)
+- [x] **1.5** Define JSON-RPC message structs (`lib/mcp/protocol/messages/`)
   - `MCP.Protocol.Messages.Request` — jsonrpc: "2.0", id, method, params
   - `MCP.Protocol.Messages.Response` — jsonrpc: "2.0", id, result | error
   - `MCP.Protocol.Messages.Notification` — jsonrpc: "2.0", method, params (no id)
   - Validation: requests MUST have id (integer or string, never null), notifications MUST NOT
 
-- [ ] **1.6** Implement JSON-RPC 2.0 protocol module (`lib/mcp/protocol.ex`)
+- [x] **1.6** Implement JSON-RPC 2.0 protocol module (`lib/mcp/protocol.ex`)
   - `MCP.Protocol.encode/1` — struct → JSON string (via Jason)
   - `MCP.Protocol.decode/1` — JSON string → struct
   - `MCP.Protocol.encode_message/1` — struct → map (for transport layer)
@@ -83,7 +83,7 @@ git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-con
   - ID generation: incrementing integers (managed by caller, not protocol module)
   - Batch support: not required (MCP doesn't use JSON-RPC batches)
 
-- [ ] **1.7** Define all MCP method-specific message types (`lib/mcp/protocol/messages/`)
+- [x] **1.7** Define all MCP method-specific message types (`lib/mcp/protocol/messages/`)
   - One module per feature group, each defining request params + result structs:
   - `initialize.ex`: InitializeParams (protocolVersion, capabilities, clientInfo), InitializeResult (protocolVersion, capabilities, serverInfo, instructions)
   - `tools.ex`: ListToolsParams (cursor), ListToolsResult (tools, nextCursor), CallToolParams (name, arguments), CallToolResult (content, structuredContent, isError)
