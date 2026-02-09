@@ -2,16 +2,16 @@
 
 ## Document Info
 - **Project**: MCP Ex
-- **Version**: 0.1.0
-- **Date**: 2026-02-08
-- **Status**: Phase 3 Complete
+- **Version**: 0.2.0
+- **Date**: 2026-02-09
+- **Status**: Phase 7 Complete — 100% Conformance (Tier 1)
 - **Protocol**: MCP 2025-11-25
 
 ---
 
 ## Overview
 
-The implementation is organized into 6 phases, each building on the previous. Each phase produces a working, testable subset of functionality with `mix test && mix credo && mix dialyzer` passing.
+The implementation is organized into 7 phases, each building on the previous. Each phase produces a working, testable subset of functionality with `mix test && mix credo && mix dialyzer` passing.
 
 **Reference SDKs** (clone locally before starting):
 ```bash
@@ -400,8 +400,8 @@ mix dialyzer
 - [x] **6.7** Run conformance test suite
   - Server: `mix run conformance/server_adapter.exs 3099`
   - Test: `npx @modelcontextprotocol/conformance server --url http://localhost:3099/mcp`
-  - **Result: 24/30 passed (80%) — Tier 2 achieved**
-  - 7 failures all require SSE streaming within tool execution (architectural limitation)
+  - **Result: 24/30 passed (80%) — Tier 2 achieved** (upgraded to 30/30 in Phase 7)
+  - 7 failures required SSE streaming within tool execution (resolved in Phase 7)
   - DNS rebinding protection implemented in Plug (Host/Origin header validation)
 
 - [x] **6.8** Integration tests: client ↔ server in-process
@@ -427,6 +427,69 @@ npx @modelcontextprotocol/conformance test --server "..."   # Conformance
 
 ---
 
+## Phase 7: Async Tool Execution + 100% Conformance
+
+**Goal**: Achieve 100% MCP conformance (Tier 1) by implementing async tool execution with intermediate SSE streaming for notifications and bidirectional requests during tool calls.
+
+**Dependencies**: Phase 6
+
+### Background
+
+Phase 6 achieved 80% conformance (Tier 2) with 7 failing tests. All failures stemmed from the same architectural limitation: tool execution was synchronous, so the server couldn't send intermediate messages (log notifications, progress updates, sampling/elicitation requests) during a `tools/call`. The conformance tests expect these intermediate messages to arrive via SSE events on the POST response stream before the final tool result.
+
+### Tasks
+
+- [x] **7.1** Create `MCP.Server.ToolContext` module (`lib/mcp/server/tool_context.ex`)
+  - Context struct: `server_pid`, `request_id`, `meta`
+  - API: `send_notification/3`, `request/3-4`, `log/3-4`, `send_progress/2-3`,
+    `request_sampling/2-3`, `request_elicitation/2-3`
+  - All functions call back to MCP.Server via GenServer.call
+
+- [x] **7.2** Update Handler behaviour (`lib/mcp/server/handler.ex`)
+  - Add `handle_call_tool/4` callback (name, arguments, context, state)
+  - Add to `@optional_callbacks` list
+  - 4-arity detected via `__info__(:functions)` for async path
+
+- [x] **7.3** Update MCP.Server for async tool execution (`lib/mcp/server.ex`)
+  - Detect `handle_call_tool/4` via `has_async_tool_handler?/1`
+  - Async path: spawn `Task.async`, build `ToolContext`, return `{:noreply, state}`
+  - Handle `:context_notify` and `:context_request` GenServer.call from ToolContext
+  - Handle Task completion (ref message) and failure (:DOWN message)
+  - `send_message_to_transport/3`: check `function_exported?/3` for `send_message/3` with opts
+
+- [x] **7.4** Update HTTPTransport with stream routing (`lib/mcp/transport/streamable_http/server.ex`)
+  - `send_message/3` with opts `[related_request_id: id]`
+  - Pending responses tracked as `{:sync, from}` or `{:stream, stream_pid}`
+  - `register_stream/3`, `deliver_message_async/2`
+  - Route responses to pending stream, notifications with related_request_id to that stream
+  - SSE encode for stream events
+
+- [x] **7.5** Update Plug with chunked SSE POST responses (`lib/mcp/transport/streamable_http/plug.ex`)
+  - `stream_request/3`: register stream, open chunked SSE, deliver async, receive loop
+  - `stream_loop/1`: receive `{:sse_event, data}` and `{:sse_done, data}`
+  - Protocol version validation: accept any version with debug log (MCP MAY reject)
+
+- [x] **7.6** Update PreStarted adapter (`lib/mcp/transport/streamable_http/pre_started.ex`)
+  - Add `send_message/3` for opts passthrough to HTTPTransport
+
+- [x] **7.7** Update conformance handler (`conformance/server_handler.ex`)
+  - All tools switched from `handle_call_tool/3` to `handle_call_tool/4` with ToolContext
+  - `test_tool_with_logging`: sends 3 log notifications with 50ms delays
+  - `test_tool_with_progress`: sends 3 progress notifications
+  - `test_sampling`: uses `ToolContext.request_sampling` for bidirectional request
+  - `test_elicitation`: uses `ToolContext.request_elicitation` with requestedSchema
+  - Elicitation defaults and enums tools: exact schema matching conformance expectations
+
+### Verification
+```bash
+mix test       # 262 tests, 0 failures
+mix credo      # No issues
+mix dialyzer   # No warnings
+# Conformance: 30/30 scenarios, 40/40 checks (100%, Tier 1)
+```
+
+---
+
 ## Dependency Graph
 
 ```
@@ -446,7 +509,10 @@ Phase 3: Client    Phase 4: Server
 Phase 5: Streamable HTTP Transport
              |
              v
-Phase 6: Client Features + Conformance
+Phase 6: Client Features + Conformance (Tier 2)
+             |
+             v
+Phase 7: Async Tool Execution + 100% Conformance (Tier 1)
 ```
 
 Phases 3 and 4 can be developed in parallel after Phase 2.
@@ -459,10 +525,11 @@ Phases 3 and 4 can be developed in parallel after Phase 2.
 |-------|-----------|---------------|
 | Phase 1: Core Protocol | 93 | 93 |
 | Phase 2: Transport + Stdio | 10 | 103 |
-| Phase 3: Client | ~35 | 95 |
-| Phase 4: Server | ~35 | 130 |
-| Phase 5: Streamable HTTP | ~25 | 155 |
-| Phase 6: Features + Conformance | ~30 | 185 |
+| Phase 3: Client | 33 | 136 |
+| Phase 4: Server | 47 | 183 |
+| Phase 5: Streamable HTTP | 32 | 215 |
+| Phase 6: Features + Conformance | 47 | 262 |
+| Phase 7: Async Tools + 100% Conformance | 0 (refactor) | 262 |
 
 ---
 

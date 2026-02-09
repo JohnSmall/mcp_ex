@@ -2,9 +2,9 @@
 
 ## Document Info
 - **Project**: MCP Ex — Elixir implementation of the Model Context Protocol
-- **Version**: 0.1.0
-- **Date**: 2026-02-08
-- **Status**: Phase 6 Complete
+- **Version**: 0.2.0
+- **Date**: 2026-02-09
+- **Status**: Phase 7 Complete — 100% Conformance (Tier 1)
 - **Protocol**: MCP 2025-11-25
 - **GitHub**: github.com/JohnSmall/mcp_ex
 
@@ -66,7 +66,7 @@ The ADK integration is a thin adapter: `ADK.Tool.McpToolset` wraps `MCP.Client` 
 4. **Conformance tested** — Integrate with official MCP conformance test suite
 5. **Idiomatic Elixir** — OTP patterns, behaviours, GenServers, streams
 6. **ADK-compatible** — Easy to wrap as `ADK.Tool.Toolset` for agent tool integration
-7. **Tier 2 SDK minimum** — 80%+ conformance pass rate as initial target
+7. **Tier 1 SDK achieved** — 100% conformance pass rate (30/30 scenarios, 40/40 checks)
 
 ### 3.2 Non-Goals
 
@@ -172,7 +172,7 @@ The ADK integration is a thin adapter: `ADK.Tool.McpToolset` wraps `MCP.Client` 
 2. Server can serve any MCP client (stdio + Streamable HTTP)
 3. Full tools/resources/prompts support (list, call/read/get, change notifications)
 4. Sampling and roots client features
-5. 80%+ conformance test pass rate (Tier 2)
+5. 100% conformance test pass rate (Tier 1) — achieved
 6. Clean: tests pass, credo clean, dialyzer clean
 7. Works as `ADK.Tool.Toolset` adapter for `adk_ex`
 8. Publishable to hex.pm

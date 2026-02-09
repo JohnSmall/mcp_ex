@@ -2,9 +2,9 @@
 
 ## Document Info
 - **Project**: MCP Ex
-- **Version**: 0.1.0
-- **Date**: 2026-02-08
-- **Status**: Phase 6 Complete
+- **Version**: 0.2.0
+- **Date**: 2026-02-09
+- **Status**: Phase 7 Complete — 100% Conformance (Tier 1)
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -113,10 +113,11 @@ lib/mcp/
   # === Client (Phase 3 - COMPLETE) ===
   client.ex                          # High-level client API (GenServer)
 
-  # === Server (Phase 4 - COMPLETE) ===
-  server.ex                          # High-level server API (GenServer)
+  # === Server (Phase 4 + Phase 7 - COMPLETE) ===
+  server.ex                          # High-level server API (GenServer, async tool support)
   server/
     handler.ex                       # Behaviour for tool/resource/prompt handlers
+    tool_context.ex                  # Context for async tool handlers (Phase 7)
 ```
 
 ---
@@ -321,6 +322,7 @@ handler module exports via `__info__(:functions)`.
 @callback init(opts) :: {:ok, state}
 @callback handle_list_tools(cursor, state) :: {:ok, tools, next_cursor, state}
 @callback handle_call_tool(name, arguments, state) :: {:ok, content, state} | {:error, code, msg, state}
+@callback handle_call_tool(name, arguments, context, state) :: {:ok, content, state} | {:error, code, msg, state}  # async (Phase 7)
 @callback handle_list_resources(cursor, state) :: {:ok, resources, next_cursor, state}
 @callback handle_read_resource(uri, state) :: {:ok, contents, state} | {:error, code, msg, state}
 @callback handle_subscribe(uri, state) :: {:ok, state} | {:error, code, msg, state}
@@ -337,6 +339,41 @@ handler module exports via `__info__(:functions)`.
 Routing is inline in the Server GenServer via pattern-matched function clauses
 on `%Request{method: "tools/list"}` etc. No separate Router module needed —
 Elixir's pattern matching makes this clean and Credo-friendly.
+
+### Async Tool Execution (Phase 7)
+
+Tools that implement `handle_call_tool/4` (with `ToolContext`) execute asynchronously
+in a spawned `Task`. This allows tools to send intermediate messages during execution:
+
+```
+Client                      Plug                    Server                  Handler Task
+  |                           |                       |                       |
+  +-- POST tools/call ------->|                       |                       |
+  |                           +-- register_stream --->|                       |
+  |                           +-- deliver_async ----->|                       |
+  |                           |                       +-- Task.async -------->|
+  |                           |                       |                       |
+  |                           |                       |<-- context_notify ----|  (log)
+  |                     {sse_event} <-- send_message -|                       |
+  |<-- SSE: log notification -|                       |                       |
+  |                           |                       |<-- context_request ---|  (sampling)
+  |                     {sse_event} <-- send_message -|                       |
+  |<-- SSE: sampling request -|                       |                       |
+  |                           |                       |                       |
+  +-- POST sampling response->|                       |                       |
+  |                           +-- deliver_message --->|                       |
+  |                           |                       +-- reply to request -->|
+  |                           |                       |                       |
+  |                           |                       |<-- Task completes ----|
+  |                     {sse_done} <-- send_message --|                       |
+  |<-- SSE: tool result ------| (stream closed)       |                       |
+```
+
+Key components:
+- `MCP.Server.ToolContext` — context struct with `server_pid`, `request_id`, `meta`
+- `handle_call_tool/4` — async callback detected via `__info__(:functions)`
+- HTTPTransport `send_message/3` — opts `[related_request_id: id]` routes to correct SSE stream
+- Plug `stream_loop/1` — chunked SSE receive loop for `{:sse_event, data}` and `{:sse_done, data}`
 
 ### Capability Auto-Detection
 

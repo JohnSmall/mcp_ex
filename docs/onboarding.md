@@ -203,11 +203,10 @@ lib/mcp/
   client.ex                          # High-level client API (GenServer)
 
   # === Server ===
-  server.ex                          # High-level server API (GenServer)
+  server.ex                          # High-level server API (GenServer, async tool support)
   server/
     handler.ex                       # Behaviour for tool/resource/prompt handlers
-    simple_handler.ex                # Convenience handler with in-state registration
-    router.ex                        # Routes JSON-RPC method → handler callback
+    tool_context.ex                  # Context for async tool handlers (send notifications, make requests)
 ```
 
 ---
@@ -347,17 +346,15 @@ name = :"client_#{System.unique_integer([:positive])}"
 ```
 
 ### Conformance Testing
-After Phase 6, run against the official test suite:
+Run against the official MCP conformance test suite (100% pass rate achieved):
 ```bash
-# Clone the conformance repo
-git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-conformance
+# Start the conformance server adapter
+mix run conformance/server_adapter.exs 3099 &
 
 # Run server conformance tests
-cd /workspace/mcp-conformance
-npx @modelcontextprotocol/conformance test --server "elixir /workspace/mcp_ex/conformance/server_adapter.exs"
+npx @modelcontextprotocol/conformance@latest test server --url http://localhost:3099/mcp
 
-# Run client conformance tests
-npx @modelcontextprotocol/conformance test --client "elixir /workspace/mcp_ex/conformance/client_adapter.exs"
+# Result: 30/30 scenarios, 40/40 checks (100%, Tier 1)
 ```
 
 ---
