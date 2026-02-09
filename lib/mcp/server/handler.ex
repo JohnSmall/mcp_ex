@@ -57,6 +57,27 @@ defmodule MCP.Server.Handler do
               | {:error, code :: integer(), message :: String.t(), state()}
 
   @doc """
+  Execute a tool with context. Called on `tools/call` when the handler
+  implements this 4-arity version.
+
+  The context (`MCP.Server.ToolContext`) allows sending notifications
+  (logging, progress) and making server-to-client requests (sampling,
+  elicitation) during tool execution.
+
+  When this callback is implemented, tool execution runs asynchronously,
+  enabling SSE streaming of intermediate messages.
+  """
+  @callback handle_call_tool(
+              name :: String.t(),
+              arguments :: map(),
+              context :: MCP.Server.ToolContext.t(),
+              state()
+            ) ::
+              {:ok, content :: [map()], state()}
+              | {:ok, content :: [map()], is_error :: boolean(), state()}
+              | {:error, code :: integer(), message :: String.t(), state()}
+
+  @doc """
   Return a list of resources. Called on `resources/list`.
   """
   @callback handle_list_resources(cursor(), state()) ::
@@ -114,6 +135,7 @@ defmodule MCP.Server.Handler do
   @optional_callbacks [
     handle_list_tools: 2,
     handle_call_tool: 3,
+    handle_call_tool: 4,
     handle_list_resources: 2,
     handle_read_resource: 2,
     handle_subscribe: 2,

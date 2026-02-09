@@ -1,9 +1,14 @@
 defmodule MCP.Conformance.ServerHandler do
   @moduledoc """
   Handler module implementing all MCP conformance test tools, resources, and prompts.
+
+  Uses `handle_call_tool/4` (with ToolContext) to support sending notifications
+  and making server-to-client requests during tool execution.
   """
 
   @behaviour MCP.Server.Handler
+
+  alias MCP.Server.ToolContext
 
   @test_image_base64 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
   @test_audio_base64 "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAA="
@@ -49,7 +54,7 @@ defmodule MCP.Conformance.ServerHandler do
       },
       %{
         "name" => "test_tool_with_logging",
-        "description" => "Tests tool with logging notifications",
+        "description" => "Tests tool that emits log messages",
         "inputSchema" => %{"type" => "object"}
       },
       %{
@@ -96,21 +101,21 @@ defmodule MCP.Conformance.ServerHandler do
   end
 
   @impl true
-  def handle_call_tool("test_simple_text", _args, state) do
+  def handle_call_tool("test_simple_text", _args, _ctx, state) do
     {:ok, [%{"type" => "text", "text" => "This is a simple text response for testing."}], state}
   end
 
-  def handle_call_tool("test_image_content", _args, state) do
+  def handle_call_tool("test_image_content", _args, _ctx, state) do
     {:ok,
      [%{"type" => "image", "data" => @test_image_base64, "mimeType" => "image/png"}], state}
   end
 
-  def handle_call_tool("test_audio_content", _args, state) do
+  def handle_call_tool("test_audio_content", _args, _ctx, state) do
     {:ok,
      [%{"type" => "audio", "data" => @test_audio_base64, "mimeType" => "audio/wav"}], state}
   end
 
-  def handle_call_tool("test_multiple_content_types", _args, state) do
+  def handle_call_tool("test_multiple_content_types", _args, _ctx, state) do
     content = [
       %{"type" => "text", "text" => "Multiple content types test:"},
       %{"type" => "image", "data" => @test_image_base64, "mimeType" => "image/png"},
@@ -127,7 +132,7 @@ defmodule MCP.Conformance.ServerHandler do
     {:ok, content, state}
   end
 
-  def handle_call_tool("test_embedded_resource", _args, state) do
+  def handle_call_tool("test_embedded_resource", _args, _ctx, state) do
     content = [
       %{
         "type" => "resource",
@@ -142,51 +147,207 @@ defmodule MCP.Conformance.ServerHandler do
     {:ok, content, state}
   end
 
-  def handle_call_tool("test_tool_with_logging", _args, state) do
-    # Note: logging notifications require SSE streaming within the POST response.
-    # For now, return the result directly (logging scenarios may fail).
+  def handle_call_tool("test_tool_with_logging", _args, ctx, state) do
+    ToolContext.log(ctx, "info", "Tool execution started")
+    Process.sleep(50)
+    ToolContext.log(ctx, "info", "Tool processing data")
+    Process.sleep(50)
+    ToolContext.log(ctx, "info", "Tool execution completed")
+
     {:ok,
      [%{"type" => "text", "text" => "Tool with logging executed successfully"}], state}
   end
 
-  def handle_call_tool("test_tool_with_progress", _args, state) do
-    # Note: progress notifications require SSE streaming within the POST response.
-    # For now, return the result directly (progress scenarios may fail).
+  def handle_call_tool("test_tool_with_progress", _args, ctx, state) do
+    ToolContext.send_progress(ctx, 0, 100)
+    Process.sleep(50)
+    ToolContext.send_progress(ctx, 50, 100)
+    Process.sleep(50)
+    ToolContext.send_progress(ctx, 100, 100)
+
     {:ok, [%{"type" => "text", "text" => "progress-token"}], state}
   end
 
-  def handle_call_tool("test_error_handling", _args, state) do
+  def handle_call_tool("test_error_handling", _args, _ctx, state) do
     {:ok,
      [%{"type" => "text", "text" => "This tool intentionally returns an error for testing"}],
      true, state}
   end
 
-  def handle_call_tool("test_sampling", _args, state) do
-    # Sampling requires server→client request during tool execution.
-    # This cannot work synchronously in our current architecture.
-    {:ok,
-     [%{"type" => "text", "text" => "LLM response: sampling not available in sync mode"}],
-     state}
+  def handle_call_tool("test_sampling", args, ctx, state) do
+    prompt = Map.get(args, "prompt", "")
+
+    case ToolContext.request_sampling(ctx, %{
+           "messages" => [
+             %{"role" => "user", "content" => %{"type" => "text", "text" => prompt}}
+           ],
+           "maxTokens" => 100
+         }) do
+      {:ok, result} ->
+        model_response =
+          get_in(result, ["content", "text"]) || inspect(result)
+
+        {:ok,
+         [%{"type" => "text", "text" => "LLM response: #{model_response}"}], state}
+
+      {:error, reason} ->
+        {:ok,
+         [%{"type" => "text", "text" => "Sampling error: #{inspect(reason)}"}], state}
+    end
   end
 
-  def handle_call_tool("test_elicitation", _args, state) do
-    # Elicitation requires server→client request during tool execution.
-    {:ok,
-     [%{"type" => "text", "text" => "User response: elicitation not available in sync mode"}],
-     state}
+  def handle_call_tool("test_elicitation", args, ctx, state) do
+    message = Map.get(args, "message", "")
+
+    case ToolContext.request_elicitation(ctx, %{
+           "message" => message,
+           "requestedSchema" => %{
+             "type" => "object",
+             "properties" => %{
+               "username" => %{
+                 "type" => "string",
+                 "description" => "User's response"
+               },
+               "email" => %{
+                 "type" => "string",
+                 "description" => "User's email address"
+               }
+             },
+             "required" => ["username", "email"]
+           }
+         }) do
+      {:ok, result} ->
+        action = Map.get(result, "action", "unknown")
+        content = Map.get(result, "content", %{})
+
+        {:ok,
+         [%{"type" => "text", "text" => "User response: action=#{action}, content=#{Jason.encode!(content)}"}],
+         state}
+
+      {:error, reason} ->
+        {:ok,
+         [%{"type" => "text", "text" => "Elicitation error: #{inspect(reason)}"}], state}
+    end
   end
 
-  def handle_call_tool("test_elicitation_sep1034_defaults", _args, state) do
-    {:ok,
-     [%{"type" => "text", "text" => "Elicitation defaults not available in sync mode"}], state}
+  def handle_call_tool("test_elicitation_sep1034_defaults", _args, ctx, state) do
+    case ToolContext.request_elicitation(ctx, %{
+           "message" => "Please review the following information",
+           "requestedSchema" => %{
+             "type" => "object",
+             "properties" => %{
+               "name" => %{
+                 "type" => "string",
+                 "description" => "User name",
+                 "default" => "John Doe"
+               },
+               "age" => %{
+                 "type" => "integer",
+                 "description" => "User age",
+                 "default" => 30
+               },
+               "score" => %{
+                 "type" => "number",
+                 "description" => "User score",
+                 "default" => 95.5
+               },
+               "status" => %{
+                 "type" => "string",
+                 "description" => "User status",
+                 "enum" => ["active", "inactive", "pending"],
+                 "default" => "active"
+               },
+               "verified" => %{
+                 "type" => "boolean",
+                 "description" => "Verification status",
+                 "default" => true
+               }
+             },
+             "required" => []
+           }
+         }) do
+      {:ok, result} ->
+        action = Map.get(result, "action", "unknown")
+        content = Map.get(result, "content", %{})
+
+        {:ok,
+         [%{"type" => "text", "text" => "Elicitation defaults: action=#{action}, content=#{Jason.encode!(content)}"}],
+         state}
+
+      {:error, reason} ->
+        {:ok,
+         [%{"type" => "text", "text" => "Elicitation error: #{inspect(reason)}"}], state}
+    end
   end
 
-  def handle_call_tool("test_elicitation_sep1330_enums", _args, state) do
-    {:ok,
-     [%{"type" => "text", "text" => "Elicitation enums not available in sync mode"}], state}
+  def handle_call_tool("test_elicitation_sep1330_enums", _args, ctx, state) do
+    case ToolContext.request_elicitation(ctx, %{
+           "message" => "Please select options from the enum fields",
+           "requestedSchema" => %{
+             "type" => "object",
+             "properties" => %{
+               "untitledSingle" => %{
+                 "type" => "string",
+                 "description" => "Select one option",
+                 "enum" => ["option1", "option2", "option3"]
+               },
+               "titledSingle" => %{
+                 "type" => "string",
+                 "description" => "Select one option with titles",
+                 "oneOf" => [
+                   %{"const" => "value1", "title" => "First Option"},
+                   %{"const" => "value2", "title" => "Second Option"},
+                   %{"const" => "value3", "title" => "Third Option"}
+                 ]
+               },
+               "legacyEnum" => %{
+                 "type" => "string",
+                 "description" => "Select one option (legacy)",
+                 "enum" => ["opt1", "opt2", "opt3"],
+                 "enumNames" => ["Option One", "Option Two", "Option Three"]
+               },
+               "untitledMulti" => %{
+                 "type" => "array",
+                 "description" => "Select multiple options",
+                 "minItems" => 1,
+                 "maxItems" => 3,
+                 "items" => %{
+                   "type" => "string",
+                   "enum" => ["option1", "option2", "option3"]
+                 }
+               },
+               "titledMulti" => %{
+                 "type" => "array",
+                 "description" => "Select multiple options with titles",
+                 "minItems" => 1,
+                 "maxItems" => 3,
+                 "items" => %{
+                   "anyOf" => [
+                     %{"const" => "value1", "title" => "First Choice"},
+                     %{"const" => "value2", "title" => "Second Choice"},
+                     %{"const" => "value3", "title" => "Third Choice"}
+                   ]
+                 }
+               }
+             },
+             "required" => []
+           }
+         }) do
+      {:ok, result} ->
+        action = Map.get(result, "action", "unknown")
+        content = Map.get(result, "content", %{})
+
+        {:ok,
+         [%{"type" => "text", "text" => "Elicitation enums: action=#{action}, content=#{Jason.encode!(content)}"}],
+         state}
+
+      {:error, reason} ->
+        {:ok,
+         [%{"type" => "text", "text" => "Elicitation error: #{inspect(reason)}"}], state}
+    end
   end
 
-  def handle_call_tool(name, _args, state) do
+  def handle_call_tool(name, _args, _ctx, state) do
     {:error, -32_601, "Unknown tool: #{name}", state}
   end
 
@@ -250,7 +411,6 @@ defmodule MCP.Conformance.ServerHandler do
   end
 
   def handle_read_resource("test://template/" <> rest, state) do
-    # Parse template URI: test://template/{id}/data
     id = rest |> String.split("/") |> hd()
 
     {:ok,

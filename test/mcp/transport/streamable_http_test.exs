@@ -268,7 +268,7 @@ defmodule MCP.Transport.StreamableHTTPTest do
       assert resp.body["error"]["code"] == -32_700
     end
 
-    test "unsupported protocol version returns 400" do
+    test "mismatched protocol version is accepted with warning" do
       {url, _bandit} = start_server()
 
       # First, initialize to get a session
@@ -297,7 +297,7 @@ defmodule MCP.Transport.StreamableHTTPTest do
           sid when is_binary(sid) -> sid
         end
 
-      # Now send a request with wrong protocol version
+      # Send a request with different protocol version — accepted per MCP spec (MAY reject)
       list_msg = %{
         "jsonrpc" => "2.0",
         "id" => 2,
@@ -305,16 +305,15 @@ defmodule MCP.Transport.StreamableHTTPTest do
         "params" => %{}
       }
 
-      bad_headers =
+      other_headers =
         headers ++
           [
             {"mcp-session-id", session_id},
             {"mcp-protocol-version", "1999-01-01"}
           ]
 
-      {:ok, resp} = Req.post(url, body: Jason.encode!(list_msg), headers: bad_headers)
-      assert resp.status == 400
-      assert resp.body["error"]["message"] =~ "Unsupported protocol version"
+      {:ok, resp} = Req.post(url, body: Jason.encode!(list_msg), headers: other_headers)
+      assert resp.status == 200
     end
   end
 
