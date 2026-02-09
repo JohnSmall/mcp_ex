@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Phase 2 Complete
+- **Status**: Phase 3 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -107,7 +107,7 @@ lib/mcp/
       client.ex                      # HTTP POST + SSE client transport (Req) (Phase 5)
       server.ex                      # HTTP POST + SSE server transport (Plug) (Phase 5)
 
-  # === Client (Phase 3 - PLANNED) ===
+  # === Client (Phase 3 - COMPLETE) ===
   client.ex                          # High-level client API (GenServer)
 
   # === Server (Phase 4 - PLANNED) ===
@@ -183,43 +183,56 @@ Key Streamable HTTP details:
 MCP.Client (GenServer)
   |
   +-- state:
-  |     transport: transport_state
-  |     session_id: string | nil
+  |     transport_module / transport_pid — the transport process
   |     server_capabilities: ServerCapabilities.t()
+  |     server_info: Implementation.t()
+  |     client_info / client_capabilities — sent during initialization
   |     pending_requests: %{id => {from, timeout_ref}}
-  |     next_id: integer
+  |     next_id: integer (incrementing)
+  |     status: :disconnected | :initializing | :ready | :closed
+  |     notification_handler: pid | (method, params -> any)
+  |     request_handlers: %{method => callback_fn}
   |
   +-- Public API:
-  |     connect/2           → initialize handshake
-  |     list_tools/1-2      → tools/list (with pagination)
-  |     call_tool/3         → tools/call
-  |     list_resources/1-2  → resources/list
-  |     read_resource/2     → resources/read
-  |     list_prompts/1-2    → prompts/list
-  |     get_prompt/2-3      → prompts/get
-  |     subscribe/2         → resources/subscribe
-  |     ping/1              → ping
-  |     close/1             → shutdown
+  |     start_link/1         → create GenServer + start transport
+  |     connect/1-2          → initialize handshake
+  |     list_tools/2         → tools/list
+  |     call_tool/3-4        → tools/call
+  |     list_resources/2     → resources/list
+  |     read_resource/2-3    → resources/read
+  |     list_resource_templates/2 → resources/templates/list
+  |     subscribe_resource/2-3    → resources/subscribe
+  |     unsubscribe_resource/2-3  → resources/unsubscribe
+  |     list_prompts/2       → prompts/list
+  |     get_prompt/3-4       → prompts/get
+  |     ping/1-2             → ping (works pre-init)
+  |     close/1              → shutdown
+  |     list_all_tools/2     → paginated tools/list
+  |     list_all_resources/2 → paginated resources/list
+  |     list_all_prompts/2   → paginated prompts/list
   |
   +-- Incoming (from server):
-        notifications → dispatch to registered handlers
-        requests (sampling, elicitation) → dispatch to host callbacks
+        notifications → dispatch to notification_handler (pid or function)
+        requests (sampling, elicitation) → dispatch to request_handlers map
 ```
 
 ### Request/Response Matching
 
-Client assigns incrementing integer IDs to outgoing requests. When a response arrives with a matching ID, the pending `GenServer.call/3` is resolved. Timeouts are per-request.
+Client assigns incrementing integer IDs to outgoing requests. Each pending request stores `{from, timeout_ref}` in a map. When a response arrives via `{:mcp_message, decoded}`, `Protocol.decode_message/1` classifies it and the matching ID resolves the pending `GenServer.call/3` via `GenServer.reply/2`. Timeouts use `Process.send_after/3`.
 
 ### Server-Initiated Requests
 
-MCP servers can send requests to clients (sampling, roots, elicitation). The client dispatches these to callback functions provided at initialization:
+MCP servers can send requests to clients (sampling, roots, elicitation). The client dispatches these to callback functions provided at start:
 
 ```elixir
-MCP.Client.connect("server",
-  transport: {:stdio, command: "..."},
-  on_sampling: fn request -> ... end,
-  on_roots_list: fn -> ... end,
-  on_elicitation: fn request -> ... end
+{:ok, client} = MCP.Client.start_link(
+  transport: {MCP.Transport.Stdio, command: "server", args: []},
+  client_info: %{name: "my_app", version: "1.0.0"},
+  request_handlers: %{
+    "sampling/createMessage" => fn _method, params -> {:ok, result} end,
+    "roots/list" => fn _method, _params -> {:ok, %{"roots" => []}} end
+  },
+  notification_handler: self()  # or fn method, params -> ... end
 )
 ```
 

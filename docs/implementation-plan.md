@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Phase 2 Complete
+- **Status**: Phase 3 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -173,66 +173,47 @@ mix dialyzer
 
 ### Tasks
 
-- [ ] **3.1** Implement client GenServer (`lib/mcp/client.ex`)
+- [x] **3.1** Implement client GenServer (`lib/mcp/client.ex`)
   - `MCP.Client` — GenServer holding transport, session state, pending requests
-  - State:
-    - `transport_module` / `transport_pid` — the transport process
-    - `server_capabilities` — negotiated server capabilities
-    - `server_info` — server's Implementation struct
-    - `session_id` — for Streamable HTTP (nil for stdio)
-    - `pending_requests` — `%{id => {from, timeout_ref}}` for request/response matching
-    - `next_id` — incrementing integer for outgoing request IDs
-    - `status` — `:connecting | :initializing | :ready | :closed`
-    - `notification_handler` — pid or function for incoming notifications
-    - `callbacks` — map of `%{method => callback_fn}` for server-initiated requests
+  - State: `transport_module`, `transport_pid`, `server_capabilities`, `server_info`,
+    `client_info`, `client_capabilities`, `pending_requests` (`%{id => {from, timeout_ref}}`),
+    `next_id` (incrementing integer), `status` (`:disconnected | :initializing | :ready | :closed`),
+    `notification_handler` (pid or function), `request_handlers` (`%{method => callback_fn}`),
+    `request_timeout`, `connect_from`
+  - Transport started in `init/1` with client as owner; supports `{module, opts}` spec
 
-- [ ] **3.2** Implement initialization handshake
-  - `MCP.Client.connect/2` — starts transport, sends `initialize` request
-  - Initialize request params: protocolVersion ("2025-11-25"), capabilities, clientInfo
-  - On response: store server capabilities + server info, send `initialized` notification
-  - Enforce: no requests (except ping) before initialization completes
-  - Version negotiation: server may respond with different protocol version — client must accept or disconnect
+- [x] **3.2** Implement initialization handshake
+  - `MCP.Client.connect/1-2` — sends `initialize` request, blocks until response
+  - On success: stores server capabilities + server info, sends `initialized` notification
+  - Enforces: no requests (except ping) before initialization completes
+  - Returns `{:ok, %{server_info, server_capabilities, protocol_version, instructions}}`
 
-- [ ] **3.3** Implement request/response matching
+- [x] **3.3** Implement request/response matching
   - Each outgoing request gets a unique integer ID and stores `{from, timeout_ref}` in pending_requests
-  - `handle_info({:mcp_message, message}, state)` routes:
-    - Response (has `id`, has `result` or `error`): match pending request, reply via `GenServer.reply/2`
-    - Request (has `id`, has `method`): server-initiated, dispatch to callback
-    - Notification (no `id`, has `method`): dispatch to notification handler
-  - Timeout: `Process.send_after(self(), {:request_timeout, id}, timeout_ms)`
-  - On timeout: reply `{:error, :timeout}`, remove from pending
+  - `handle_info({:mcp_message, message}, state)` uses `Protocol.decode_message/1` to route:
+    - Response → match pending request, reply via `GenServer.reply/2`
+    - Request → server-initiated, dispatch to `request_handlers` callback
+    - Notification → dispatch to `notification_handler`
+  - Timeout via `Process.send_after(self(), {:request_timeout, id}, timeout_ms)`
+  - Transport closed: replies `{:error, {:transport_closed, reason}}` to all pending
 
-- [ ] **3.4** Implement core client API
-  - `list_tools(client, opts \\ [])` — `tools/list` request, returns `{:ok, tools, next_cursor}`
-  - `call_tool(client, name, arguments, opts \\ [])` — `tools/call` request
-  - `list_resources(client, opts \\ [])` — `resources/list` request
-  - `read_resource(client, uri)` — `resources/read` request
-  - `list_resource_templates(client, opts \\ [])` — `resources/templates/list`
-  - `subscribe_resource(client, uri)` — `resources/subscribe`
-  - `unsubscribe_resource(client, uri)` — `resources/unsubscribe`
-  - `list_prompts(client, opts \\ [])` — `prompts/list` request
-  - `get_prompt(client, name, arguments \\ %{})` — `prompts/get` request
-  - `ping(client)` — `ping` request (should work even during initialization)
-  - `close(client)` — graceful shutdown (close transport)
-  - All operations: GenServer.call with configurable timeout
+- [x] **3.4** Implement core client API
+  - `list_tools/2`, `call_tool/3-4`, `list_resources/2`, `read_resource/2-3`,
+    `list_resource_templates/2`, `subscribe_resource/2-3`, `unsubscribe_resource/2-3`,
+    `list_prompts/2`, `get_prompt/3-4`, `ping/1-2`, `close/1`
+  - Helper accessors: `transport/1`, `status/1`, `server_capabilities/1`, `server_info/1`
+  - All operations use GenServer.call with configurable timeout
 
-- [ ] **3.5** Implement pagination helper
-  - `list_all_tools/2`, `list_all_resources/2`, `list_all_prompts/2`
-  - Uses `Stream.resource/3` to lazily paginate with `cursor`/`nextCursor`
-  - Each step sends a list request with the cursor from the previous response
+- [x] **3.5** Implement pagination helpers
+  - `list_all_tools/2`, `list_all_resources/2`, `list_all_resource_templates/2`, `list_all_prompts/2`
+  - Recursive pagination using `cursor`/`nextCursor` from responses
   - Terminates when `nextCursor` is nil
 
-- [ ] **3.6** Implement notification handling
-  - Client receives notifications from server:
-    - `notifications/tools/list_changed` — tools changed, should re-list
-    - `notifications/resources/list_changed` — resources changed
-    - `notifications/resources/updated` — specific resource updated (params: uri)
-    - `notifications/prompts/list_changed` — prompts changed
-    - `notifications/message` — log message from server
-    - `notifications/progress` — progress update for a request
-    - `notifications/cancelled` — server cancelled a request
-  - Default: log unknown notifications
-  - User can provide custom handler function/pid at connect time
+- [x] **3.6** Implement notification handling
+  - Dispatches to pid (via `send(pid, {:mcp_notification, method, params})`) or function handler
+  - Server-initiated requests dispatched to `request_handlers` map, responds with result or error
+  - Unknown server requests get method_not_found error response
+  - 33 tests total covering all client functionality
 
 ### Verification
 ```bash
