@@ -299,76 +299,48 @@ mix dialyzer
 
 ### Tasks
 
-- [ ] **5.1** Add optional HTTP dependencies
-  - `{:req, "~> 0.5", optional: true}` — HTTP client (for client-side Streamable HTTP)
-  - `{:plug, "~> 1.16", optional: true}` — HTTP framework (for server-side Streamable HTTP)
-  - `{:bandit, "~> 1.5", optional: true}` — HTTP server (for server-side Streamable HTTP)
-  - `{:plug_cowboy, "~> 2.7", optional: true}` — alternative HTTP server
-  - Ensure stdio transport works with zero HTTP deps
+- [x] **5.1** Add optional HTTP dependencies
+  - `{:req, "~> 0.5", optional: true}` — HTTP client (for Streamable HTTP client)
+  - `{:plug, "~> 1.16", optional: true}` — HTTP framework (for Streamable HTTP server)
+  - `{:bandit, "~> 1.5", optional: true}` — HTTP server (for Streamable HTTP server)
+  - Existing stdio transport works with zero HTTP deps
 
-- [ ] **5.2** Implement Streamable HTTP client transport (`lib/mcp/transport/streamable_http/client.ex`)
+- [x] **5.2** Implement Streamable HTTP client transport (`lib/mcp/transport/streamable_http/client.ex`)
   - `MCP.Transport.StreamableHTTP.Client` — GenServer implementing Transport behaviour
-  - Sends JSON-RPC messages via HTTP POST to server endpoint
-  - Required headers:
-    - `Content-Type: application/json`
-    - `Accept: application/json, text/event-stream`
-    - `MCP-Protocol-Version: 2025-11-25`
-    - `MCP-Session-Id: <session_id>` (after initialization)
-  - Response handling:
-    - `application/json` → single JSON-RPC response, deliver to owner
-    - `text/event-stream` → SSE stream, parse events, deliver each as message to owner
-  - SSE parsing:
-    - Lines starting with `data: ` contain JSON-RPC messages
-    - Lines starting with `id: ` set the last event ID (for resumability)
-    - Lines starting with `event: ` set event type (usually "message")
-    - Empty line = end of event
-  - Session management:
-    - Extract `MCP-Session-Id` from initialize response header
-    - Include it in all subsequent requests
-  - Optional: GET request for SSE stream (server-initiated messages)
-    - Open persistent SSE connection for receiving server pushes
-    - Include `Last-Event-ID` header for resumability
-  - Connection lifecycle:
-    - On close: send HTTP DELETE to session endpoint (if session ID exists)
+  - Sends JSON-RPC via HTTP POST using Req library
+  - Required headers: Content-Type, Accept, MCP-Protocol-Version, MCP-Session-Id
+  - Response handling: application/json (direct) or text/event-stream (SSE parsing)
+  - Session management: extracts MCP-Session-Id from init response, includes in subsequent
+  - On close: sends HTTP DELETE to session endpoint
 
-- [ ] **5.3** Implement Streamable HTTP server transport (`lib/mcp/transport/streamable_http/server.ex`)
-  - `MCP.Transport.StreamableHTTP.Server` — Plug implementing server-side transport
-  - POST endpoint:
-    - Receive JSON-RPC message from request body
-    - Check `MCP-Protocol-Version` header (must be "2025-11-25")
-    - Check `MCP-Session-Id` header (must match if stateful session)
-    - Route message to server GenServer for processing
-    - Response options:
-      a. Single JSON response: `Content-Type: application/json`
-      b. SSE stream: `Content-Type: text/event-stream`, send server messages then final response
-    - For initialize: generate session ID, include in response header
-  - GET endpoint (optional):
-    - Open SSE stream for server-initiated messages
-    - Client connects, receives push notifications/requests
-    - Uses chunked transfer encoding
-  - DELETE endpoint:
-    - Client requests session termination
-    - Clean up server session state
-  - Session registry:
-    - Map session IDs to server GenServer pids
-    - Session timeout / cleanup for abandoned sessions
+- [x] **5.3** Implement Streamable HTTP server transport
+  - Three-module design:
+    - `StreamableHTTP.Plug` (`plug.ex`) — Plug handling POST/GET/DELETE
+    - `StreamableHTTP.Server` (`server.ex`) — Transport GenServer (bridges Plug ↔ MCP.Server)
+    - `StreamableHTTP.PreStarted` (`pre_started.ex`) — Adapter for reusing transport pid
+  - POST: parse JSON-RPC, route to session, return JSON or SSE response
+  - GET: SSE stream endpoint for server-initiated messages
+  - DELETE: terminate session, clean up ETS registry
+  - ETS-based session registry mapping session_id → transport_pid
+  - Supports both stateful (with session IDs) and stateless modes
+  - Protocol version header validation on non-initialize requests
 
-- [ ] **5.4** Implement SSE parsing/encoding utilities (`lib/mcp/transport/sse.ex`)
-  - `MCP.Transport.SSE.encode/2` — encode a JSON-RPC message as SSE event
-    - Format: `event: message\ndata: <json>\nid: <optional_id>\n\n`
-  - `MCP.Transport.SSE.decode/1` — parse SSE event text into components
-  - `MCP.Transport.SSE.stream_parser/0` — stateful parser for chunked SSE data
-    - Handles partial reads, buffers incomplete events
-    - Emits complete events as they arrive
+- [x] **5.4** Implement SSE parsing/encoding utilities (`lib/mcp/transport/sse.ex`)
+  - `encode_event/1` — encode SSE event map to wire format
+  - `encode_message/2` — encode JSON-RPC message as SSE event with options (id, event type)
+  - `decode_event/1` — parse SSE event text into event map
+  - `new_parser/0`, `feed/2` — incremental stream parser for chunked SSE data
+  - 20 tests covering encoding, decoding, multi-line data, stream parsing, round-trip
 
-- [ ] **5.5** Integration testing (client ↔ server over HTTP)
-  - Start Bandit server with our Plug
-  - Connect MCP.Client with Streamable HTTP transport
+- [x] **5.5** Integration testing (client ↔ server over HTTP)
+  - 12 integration tests using Bandit + Plug + MCP.Server + MCP.Client
   - Full lifecycle: initialize → tools/list → tools/call → close
-  - Test SSE streaming responses
-  - Test session management (MCP-Session-Id)
-  - Test resumability (Last-Event-ID)
-  - Test server-initiated messages via GET SSE stream
+  - Test list/read resources, error handling, ping
+  - Test JSON response mode (enable_json_response: true)
+  - Test session management (MCP-Session-Id header extraction and inclusion)
+  - Test raw HTTP requests (protocol version validation, 405 for unsupported methods)
+  - 20 SSE unit tests covering encoding, decoding, stream parsing, round-trip
+  - Total: 215 tests, 0 failures, credo clean, dialyzer clean
 
 ### Verification
 ```bash

@@ -30,6 +30,13 @@ defmodule McpEx.MixProject do
     [
       {:jason, "~> 1.4"},
       {:elixir_uuid, "~> 1.2"},
+
+      # Optional: Streamable HTTP transport
+      {:req, "~> 0.5", optional: true},
+      {:plug, "~> 1.16", optional: true},
+      {:bandit, "~> 1.5", optional: true},
+
+      # Dev/test
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}

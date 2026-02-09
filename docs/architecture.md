@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Phase 4 Complete
+- **Status**: Phase 5 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -99,13 +99,16 @@ lib/mcp/
       completion.ex                  # Completion Params/Result
       notifications.ex               # Progress/Cancelled/ResourceUpdated params
 
-  # === Transport Layer (Phase 2 - COMPLETE) ===
+  # === Transport Layer (Phase 2 + Phase 5 - COMPLETE) ===
   transport.ex                       # Transport behaviour (start_link, send_message, close)
   transport/
     stdio.ex                         # Port-based stdin/stdout transport (client + server modes)
+    sse.ex                           # SSE encoding/decoding utilities
     streamable_http/
-      client.ex                      # HTTP POST + SSE client transport (Req) (Phase 5)
-      server.ex                      # HTTP POST + SSE server transport (Plug) (Phase 5)
+      client.ex                      # HTTP POST + SSE client transport (Req)
+      server.ex                      # Server-side transport GenServer (bridges Plug ↔ MCP.Server)
+      plug.ex                        # Plug endpoint handling POST/GET/DELETE HTTP methods
+      pre_started.ex                 # Transport adapter for reusing existing transport pid
 
   # === Client (Phase 3 - COMPLETE) ===
   client.ex                          # High-level client API (GenServer)
@@ -149,29 +152,52 @@ MCP.Client (GenServer)
 - Messages are newline-delimited JSON-RPC (no embedded newlines)
 - Server's stderr is captured/logged but not parsed as protocol
 
-### Streamable HTTP Transport
+### Streamable HTTP Transport (Phase 5 - COMPLETE)
 
 ```
 Client Side:                          Server Side:
-MCP.Client                           MCP.Server
+MCP.Client (GenServer)               StreamableHTTP.Plug (Plug endpoint)
   |                                     |
-  +-- POST requests ────────────────→ Plug endpoint
-  |   (JSON-RPC in body)               |
-  |                                    +-- Response: JSON or SSE stream
-  +-- GET (optional) ───────────────→  |
-  |   (SSE listen for server msgs)     |
-  |                                    +-- MCP-Session-Id header
-  +-- MCP-Session-Id header            +-- MCP-Protocol-Version header
-  +-- MCP-Protocol-Version header
+  +-- StreamableHTTP.Client             +-- POST → route_post → deliver_message
+  |   (GenServer, Transport)            |     → StreamableHTTP.Server (GenServer)
+  |   Sends HTTP POST (Req)             |     → MCP.Server (handler callbacks)
+  |   Parses JSON or SSE response       |     → response routed back to caller
+  |                                     |
+  |   Headers:                          +-- GET → SSE stream (server-initiated)
+  |   Content-Type: application/json    |
+  |   Accept: application/json,         +-- DELETE → terminate session
+  |           text/event-stream         |
+  |   MCP-Session-Id: <sid>             +-- ETS session registry
+  |   MCP-Protocol-Version: 2025-11-25 |     {session_id → transport_pid}
+  |                                     |
+  +-- On close: HTTP DELETE             +-- PreStarted adapter
+                                              (reuses transport pid for MCP.Server)
 ```
 
-Key Streamable HTTP details:
-- Client POST = one JSON-RPC message per request
-- Server responds with either `application/json` or `text/event-stream`
-- SSE streams can include server-initiated requests/notifications before the response
-- Session management via `MCP-Session-Id` header
-- Resumability via SSE event IDs and `Last-Event-ID`
-- Client can GET to open SSE stream for server-initiated messages
+Architecture overview:
+- **Client**: `StreamableHTTP.Client` GenServer implements Transport behaviour.
+  Sends JSON-RPC via `Req.post/2`, parses `application/json` or SSE responses.
+  Extracts `MCP-Session-Id` from initialize response, includes in all subsequent requests.
+  On close, sends HTTP DELETE to terminate session.
+
+- **Server**: Three-module design:
+  - `StreamableHTTP.Plug` — Plug handling POST/GET/DELETE HTTP methods. Creates sessions
+    (transport + MCP.Server pairs) on initialize. Routes requests via ETS session registry.
+  - `StreamableHTTP.Server` — Transport GenServer bridging Plug ↔ MCP.Server. Stores
+    pending response callers so responses can be routed back to the correct HTTP connection.
+  - `StreamableHTTP.PreStarted` — Adapter that lets MCP.Server reuse an already-started
+    transport process (since the Plug starts the transport before the MCP.Server).
+
+- **SSE**: `MCP.Transport.SSE` provides encoding/decoding utilities:
+  - `encode_event/1`, `encode_message/2` for SSE event creation
+  - `decode_event/1` for parsing SSE event text
+  - `new_parser/0`, `feed/2` for incremental/chunked SSE stream parsing
+
+- **Session management**: Server generates UUID session IDs, stores in ETS. Client extracts
+  from `MCP-Session-Id` response header. Protocol version validated via `MCP-Protocol-Version`.
+
+- **Dependencies**: req ~> 0.5 (HTTP client), plug ~> 1.16 (HTTP framework),
+  bandit ~> 1.5 (HTTP server) — all optional, only needed for Streamable HTTP
 
 ---
 
