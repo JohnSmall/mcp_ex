@@ -4,7 +4,7 @@
 - **Project**: MCP Ex — Elixir implementation of the Model Context Protocol
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Phase 5 Complete
+- **Status**: Phase 6 Complete
 - **Protocol**: MCP 2025-11-25
 - **GitHub**: github.com/JohnSmall/mcp_ex
 

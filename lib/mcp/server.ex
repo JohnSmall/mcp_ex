@@ -49,6 +49,7 @@ defmodule MCP.Server do
   require Logger
 
   alias MCP.Protocol
+
   alias MCP.Protocol.Capabilities.{
     CompletionCapabilities,
     LoggingCapabilities,
@@ -57,6 +58,7 @@ defmodule MCP.Server do
     ServerCapabilities,
     ToolCapabilities
   }
+
   alias MCP.Protocol.Error
   alias MCP.Protocol.Messages.{Initialize, Notification, Request, Response}
   alias MCP.Protocol.Methods
@@ -212,7 +214,9 @@ defmodule MCP.Server do
     {transport_spec, opts} = Keyword.pop!(opts, :transport)
     {handler_spec, opts} = Keyword.pop!(opts, :handler)
 
-    server_info = build_server_info(Keyword.get(opts, :server_info, %{name: "mcp_ex", version: "0.1.0"}))
+    server_info =
+      build_server_info(Keyword.get(opts, :server_info, %{name: "mcp_ex", version: "0.1.0"}))
+
     instructions = Keyword.get(opts, :instructions)
     request_timeout = Keyword.get(opts, :request_timeout, @default_request_timeout)
 
@@ -384,11 +388,17 @@ defmodule MCP.Server do
 
   # --- Notification handling ---
 
-  defp handle_client_notification(%Notification{method: "notifications/initialized"}, %{status: :waiting} = state) do
+  defp handle_client_notification(
+         %Notification{method: "notifications/initialized"},
+         %{status: :waiting} = state
+       ) do
     {:noreply, %{state | status: :ready}}
   end
 
-  defp handle_client_notification(%Notification{method: "notifications/cancelled", params: params}, state) do
+  defp handle_client_notification(
+         %Notification{method: "notifications/cancelled", params: params},
+         state
+       ) do
     Logger.debug("MCP Server: received cancellation for request #{inspect(params)}")
     {:noreply, state}
   end
@@ -427,18 +437,20 @@ defmodule MCP.Server do
   defp handle_initialize(id, params, %{status: :waiting} = state) do
     init_params = Initialize.Params.from_map(params)
 
-    result = Initialize.Result.to_map(%Initialize.Result{
-      protocol_version: negotiate_version(init_params.protocol_version),
-      capabilities: state.capabilities,
-      server_info: state.server_info,
-      instructions: state.instructions
-    })
+    result =
+      Initialize.Result.to_map(%Initialize.Result{
+        protocol_version: negotiate_version(init_params.protocol_version),
+        capabilities: state.capabilities,
+        server_info: state.server_info,
+        instructions: state.instructions
+      })
 
     send_success_response(state, id, result)
 
-    state = %{state |
-      client_capabilities: init_params.capabilities,
-      client_info: init_params.client_info
+    state = %{
+      state
+      | client_capabilities: init_params.capabilities,
+        client_info: init_params.client_info
     }
 
     {:noreply, state}
@@ -665,7 +677,8 @@ defmodule MCP.Server do
     %ServerCapabilities{
       tools: if({:handle_list_tools, 2} in callbacks, do: %ToolCapabilities{list_changed: true}),
       resources: detect_resource_capabilities(callbacks),
-      prompts: if({:handle_list_prompts, 2} in callbacks, do: %PromptCapabilities{list_changed: true}),
+      prompts:
+        if({:handle_list_prompts, 2} in callbacks, do: %PromptCapabilities{list_changed: true}),
       logging: if({:handle_set_log_level, 2} in callbacks, do: %LoggingCapabilities{}),
       completions: if({:handle_complete, 3} in callbacks, do: %CompletionCapabilities{})
     }
@@ -699,22 +712,38 @@ defmodule MCP.Server do
 
   defp send_request(state, id, method, params) do
     message = Request.new(id, method, params)
-    state.transport_module.send_message(state.transport_pid, Jason.decode!(Jason.encode!(message)))
+
+    state.transport_module.send_message(
+      state.transport_pid,
+      Jason.decode!(Jason.encode!(message))
+    )
   end
 
   defp send_notification(state, method, params) do
     message = Notification.new(method, params)
-    state.transport_module.send_message(state.transport_pid, Jason.decode!(Jason.encode!(message)))
+
+    state.transport_module.send_message(
+      state.transport_pid,
+      Jason.decode!(Jason.encode!(message))
+    )
   end
 
   defp send_success_response(state, id, result) do
     response = Response.success(id, result)
-    state.transport_module.send_message(state.transport_pid, Jason.decode!(Jason.encode!(response)))
+
+    state.transport_module.send_message(
+      state.transport_pid,
+      Jason.decode!(Jason.encode!(response))
+    )
   end
 
   defp send_error_response(state, id, %Error{} = error) do
     response = Response.error(id, error)
-    state.transport_module.send_message(state.transport_pid, Jason.decode!(Jason.encode!(response)))
+
+    state.transport_module.send_message(
+      state.transport_pid,
+      Jason.decode!(Jason.encode!(response))
+    )
   end
 
   defp put_pending(state, id, from, timeout_ref) do

@@ -169,9 +169,7 @@ defmodule MCP.Transport.StreamableHTTP.Client do
             deliver_json_response(new_state, resp_body)
 
           true ->
-            Logger.warning(
-              "MCP StreamableHTTP Client: unexpected content-type: #{content_type}"
-            )
+            Logger.warning("MCP StreamableHTTP Client: unexpected content-type: #{content_type}")
 
             {:ok, new_state}
         end
@@ -181,16 +179,12 @@ defmodule MCP.Transport.StreamableHTTP.Client do
         {:ok, state}
 
       {:ok, %Req.Response{status: status, body: resp_body}} ->
-        Logger.warning(
-          "MCP StreamableHTTP Client: HTTP #{status}: #{inspect(resp_body)}"
-        )
+        Logger.warning("MCP StreamableHTTP Client: HTTP #{status}: #{inspect(resp_body)}")
 
         {:error, {:http_error, status, resp_body}}
 
       {:error, reason} ->
-        Logger.warning(
-          "MCP StreamableHTTP Client: POST failed: #{inspect(reason)}"
-        )
+        Logger.warning("MCP StreamableHTTP Client: POST failed: #{inspect(reason)}")
 
         {:error, reason}
     end

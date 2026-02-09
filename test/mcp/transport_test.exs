@@ -7,7 +7,8 @@ defmodule MCP.TransportTest do
     test "sends and collects messages" do
       {:ok, transport} = MockTransport.start_link(owner: self())
 
-      assert :ok = MockTransport.send_message(transport, %{"jsonrpc" => "2.0", "method" => "ping"})
+      assert :ok =
+               MockTransport.send_message(transport, %{"jsonrpc" => "2.0", "method" => "ping"})
 
       assert :ok =
                MockTransport.send_message(transport, %{

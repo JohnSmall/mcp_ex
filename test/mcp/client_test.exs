@@ -611,8 +611,8 @@ defmodule MCP.ClientTest do
       })
 
       assert_receive {:notification, "notifications/resources/updated",
-                       %{"uri" => "file:///test.txt"}},
-                      1000
+                      %{"uri" => "file:///test.txt"}},
+                     1000
     end
 
     test "handles log message notifications" do
@@ -792,6 +792,416 @@ defmodule MCP.ClientTest do
 
       {:ok, _} = Task.await(task1)
       {:ok, _} = Task.await(task2)
+    end
+  end
+
+  describe "sampling callback (on_sampling)" do
+    test "auto-advertises sampling capability when on_sampling provided" do
+      test_pid = self()
+
+      callback = fn _params ->
+        send(test_pid, :sampling_called)
+
+        {:ok,
+         %{
+           "role" => "assistant",
+           "content" => %{"type" => "text", "text" => "hi"},
+           "model" => "test",
+           "stopReason" => "endTurn"
+         }}
+      end
+
+      {client, transport} = start_client(on_sampling: callback)
+
+      task = Task.async(fn -> Client.connect(client) end)
+
+      [init_request] = wait_for_sent(transport, 1)
+
+      # Verify sampling capability is advertised
+      assert init_request["params"]["capabilities"]["sampling"] == %{}
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => init_request["id"],
+        "result" => %{
+          "protocolVersion" => "2025-11-25",
+          "capabilities" => @server_capabilities,
+          "serverInfo" => @server_info
+        }
+      })
+
+      {:ok, _} = Task.await(task)
+    end
+
+    test "dispatches sampling/createMessage to on_sampling callback" do
+      test_pid = self()
+
+      callback = fn params ->
+        send(test_pid, {:sampling_called, params})
+
+        {:ok,
+         %{
+           "role" => "assistant",
+           "content" => %{"type" => "text", "text" => "response"},
+           "model" => "test-model",
+           "stopReason" => "endTurn"
+         }}
+      end
+
+      {client, transport} = start_client(on_sampling: callback)
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => 100,
+        "method" => "sampling/createMessage",
+        "params" => %{
+          "messages" => [
+            %{"role" => "user", "content" => %{"type" => "text", "text" => "Hello"}}
+          ],
+          "maxTokens" => 100
+        }
+      })
+
+      assert_receive {:sampling_called, params}, 1000
+      assert params["maxTokens"] == 100
+
+      messages = wait_for_sent(transport, 3)
+      response = List.last(messages)
+      assert response["id"] == 100
+      assert response["result"]["role"] == "assistant"
+      assert response["result"]["model"] == "test-model"
+    end
+
+    test "returns error when sampling callback returns error" do
+      callback = fn _params ->
+        {:error, %Error{code: -1, message: "User rejected sampling"}}
+      end
+
+      {client, transport} = start_client(on_sampling: callback)
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => 101,
+        "method" => "sampling/createMessage",
+        "params" => %{"messages" => [], "maxTokens" => 10}
+      })
+
+      messages = wait_for_sent(transport, 3)
+      response = List.last(messages)
+      assert response["id"] == 101
+      assert response["error"]["code"] == -1
+      assert response["error"]["message"] == "User rejected sampling"
+    end
+
+    test "returns method not found when no sampling handler registered" do
+      {client, transport} = start_client()
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => 102,
+        "method" => "sampling/createMessage",
+        "params" => %{"messages" => [], "maxTokens" => 10}
+      })
+
+      messages = wait_for_sent(transport, 3)
+      response = List.last(messages)
+      assert response["id"] == 102
+      assert response["error"]["code"] == Error.method_not_found_code()
+    end
+  end
+
+  describe "roots callback (on_roots_list)" do
+    test "auto-advertises roots capability when on_roots_list provided" do
+      callback = fn _params ->
+        {:ok, %{"roots" => [%{"uri" => "file:///project", "name" => "project"}]}}
+      end
+
+      {client, transport} = start_client(on_roots_list: callback)
+
+      task = Task.async(fn -> Client.connect(client) end)
+
+      [init_request] = wait_for_sent(transport, 1)
+
+      # Verify roots capability is advertised with listChanged
+      assert init_request["params"]["capabilities"]["roots"]["listChanged"] == true
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => init_request["id"],
+        "result" => %{
+          "protocolVersion" => "2025-11-25",
+          "capabilities" => @server_capabilities,
+          "serverInfo" => @server_info
+        }
+      })
+
+      {:ok, _} = Task.await(task)
+    end
+
+    test "dispatches roots/list to on_roots_list callback" do
+      test_pid = self()
+
+      callback = fn params ->
+        send(test_pid, {:roots_called, params})
+        {:ok, %{"roots" => [%{"uri" => "file:///project", "name" => "project"}]}}
+      end
+
+      {client, transport} = start_client(on_roots_list: callback)
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => 200,
+        "method" => "roots/list",
+        "params" => %{}
+      })
+
+      assert_receive {:roots_called, _params}, 1000
+
+      messages = wait_for_sent(transport, 3)
+      response = List.last(messages)
+      assert response["id"] == 200
+      assert length(response["result"]["roots"]) == 1
+      assert hd(response["result"]["roots"])["uri"] == "file:///project"
+    end
+
+    test "notify_roots_changed sends notification to server" do
+      callback = fn _params ->
+        {:ok, %{"roots" => []}}
+      end
+
+      {client, transport} = start_client(on_roots_list: callback)
+      do_connect(client, transport)
+
+      Client.notify_roots_changed(client)
+
+      messages = wait_for_sent(transport, 3)
+      notification = List.last(messages)
+      assert notification["method"] == "notifications/roots/list_changed"
+      refute Map.has_key?(notification, "id")
+    end
+
+    test "notify_roots_changed is silently dropped when not ready" do
+      {client, _transport} = start_client()
+
+      # Should not crash, just silently dropped
+      Client.notify_roots_changed(client)
+      assert Client.status(client) == :disconnected
+    end
+  end
+
+  describe "elicitation callback (on_elicitation)" do
+    test "auto-advertises elicitation capability when on_elicitation provided" do
+      callback = fn _params ->
+        {:ok, %{"action" => "accept", "content" => %{"name" => "Claude"}}}
+      end
+
+      {client, transport} = start_client(on_elicitation: callback)
+
+      task = Task.async(fn -> Client.connect(client) end)
+
+      [init_request] = wait_for_sent(transport, 1)
+
+      # Verify elicitation capability is advertised
+      caps = init_request["params"]["capabilities"]["elicitation"]
+      assert is_map(caps)
+      assert Map.has_key?(caps, "form")
+      assert Map.has_key?(caps, "url")
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => init_request["id"],
+        "result" => %{
+          "protocolVersion" => "2025-11-25",
+          "capabilities" => @server_capabilities,
+          "serverInfo" => @server_info
+        }
+      })
+
+      {:ok, _} = Task.await(task)
+    end
+
+    test "dispatches elicitation/create to on_elicitation callback" do
+      test_pid = self()
+
+      callback = fn params ->
+        send(test_pid, {:elicitation_called, params})
+        {:ok, %{"action" => "accept", "content" => %{"name" => "World"}}}
+      end
+
+      {client, transport} = start_client(on_elicitation: callback)
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => 300,
+        "method" => "elicitation/create",
+        "params" => %{
+          "message" => "What is your name?",
+          "requestedSchema" => %{
+            "type" => "object",
+            "properties" => %{"name" => %{"type" => "string"}}
+          }
+        }
+      })
+
+      assert_receive {:elicitation_called, params}, 1000
+      assert params["message"] == "What is your name?"
+
+      messages = wait_for_sent(transport, 3)
+      response = List.last(messages)
+      assert response["id"] == 300
+      assert response["result"]["action"] == "accept"
+      assert response["result"]["content"]["name"] == "World"
+    end
+
+    test "handles elicitation decline" do
+      callback = fn _params ->
+        {:ok, %{"action" => "decline"}}
+      end
+
+      {client, transport} = start_client(on_elicitation: callback)
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => 301,
+        "method" => "elicitation/create",
+        "params" => %{"message" => "Enter data"}
+      })
+
+      messages = wait_for_sent(transport, 3)
+      response = List.last(messages)
+      assert response["id"] == 301
+      assert response["result"]["action"] == "decline"
+    end
+  end
+
+  describe "cancel/3" do
+    test "sends cancellation notification" do
+      {client, transport} = start_client()
+      do_connect(client, transport)
+
+      Client.cancel(client, 42, "no longer needed")
+
+      messages = wait_for_sent(transport, 3)
+      notification = List.last(messages)
+      assert notification["method"] == "notifications/cancelled"
+      assert notification["params"]["requestId"] == 42
+      assert notification["params"]["reason"] == "no longer needed"
+      refute Map.has_key?(notification, "id")
+    end
+
+    test "sends cancellation without reason" do
+      {client, transport} = start_client()
+      do_connect(client, transport)
+
+      Client.cancel(client, 99)
+
+      messages = wait_for_sent(transport, 3)
+      notification = List.last(messages)
+      assert notification["method"] == "notifications/cancelled"
+      assert notification["params"]["requestId"] == 99
+      refute Map.has_key?(notification["params"], "reason")
+    end
+
+    test "cancel is silently dropped when closed" do
+      {client, _transport} = start_client()
+      :ok = Client.close(client)
+
+      # Should not crash
+      Client.cancel(client, 1)
+    end
+  end
+
+  describe "progress notifications" do
+    test "progress notifications are dispatched to notification handler" do
+      handler = self()
+      {client, transport} = start_client(notification_handler: handler)
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "method" => "notifications/progress",
+        "params" => %{
+          "progressToken" => "token-1",
+          "progress" => 50,
+          "total" => 100,
+          "message" => "Processing..."
+        }
+      })
+
+      assert_receive {:mcp_notification, "notifications/progress", params}, 1000
+      assert params["progressToken"] == "token-1"
+      assert params["progress"] == 50
+      assert params["total"] == 100
+    end
+  end
+
+  describe "combined capabilities" do
+    test "advertises all capabilities when all callbacks provided" do
+      {client, transport} =
+        start_client(
+          on_sampling: fn _params -> {:ok, %{}} end,
+          on_roots_list: fn _params -> {:ok, %{"roots" => []}} end,
+          on_elicitation: fn _params -> {:ok, %{"action" => "decline"}} end
+        )
+
+      task = Task.async(fn -> Client.connect(client) end)
+
+      [init_request] = wait_for_sent(transport, 1)
+      caps = init_request["params"]["capabilities"]
+
+      assert caps["sampling"] == %{}
+      assert caps["roots"]["listChanged"] == true
+      assert is_map(caps["elicitation"])
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => init_request["id"],
+        "result" => %{
+          "protocolVersion" => "2025-11-25",
+          "capabilities" => @server_capabilities,
+          "serverInfo" => @server_info
+        }
+      })
+
+      {:ok, _} = Task.await(task)
+    end
+
+    test "explicit request_handlers override auto-generated ones" do
+      test_pid = self()
+
+      explicit_handler = fn _method, _params ->
+        send(test_pid, :explicit_handler_called)
+
+        {:ok,
+         %{"role" => "assistant", "content" => %{}, "model" => "m", "stopReason" => "endTurn"}}
+      end
+
+      {client, transport} =
+        start_client(
+          on_sampling: fn _params ->
+            send(test_pid, :auto_handler_called)
+            {:ok, %{}}
+          end,
+          request_handlers: %{"sampling/createMessage" => explicit_handler}
+        )
+
+      do_connect(client, transport)
+
+      MockTransport.inject(transport, %{
+        "jsonrpc" => "2.0",
+        "id" => 500,
+        "method" => "sampling/createMessage",
+        "params" => %{"messages" => [], "maxTokens" => 10}
+      })
+
+      assert_receive :explicit_handler_called, 1000
+      refute_receive :auto_handler_called, 100
     end
   end
 end

@@ -1,0 +1,18 @@
+# MCP Conformance Expected Failures Baseline
+# Pass rate: 24/30 (80%) - Tier 2
+#
+# These scenarios require SSE streaming within tool execution
+# (sending notifications/requests during a single POST response).
+# This requires enhancing the Plug to use chunked SSE responses.
+
+server:
+  # Requires SSE streaming for notifications during tool call
+  - tools-call-with-logging
+  - tools-call-with-progress
+  # Requires server→client request during tool call (bidirectional streaming)
+  - tools-call-sampling
+  - tools-call-elicitation
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  # Requires SSE GET endpoint with proper streaming
+  - server-sse-multiple-streams

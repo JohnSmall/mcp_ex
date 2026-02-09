@@ -22,11 +22,26 @@ defmodule MCP.Client do
     * `:transport` — `{module, opts}` transport spec. The client starts the
       transport in its init, setting itself as the owner.
     * `:client_info` — `%Implementation{}` or map with `:name` and `:version`.
-    * `:client_capabilities` — `%ClientCapabilities{}` (default: empty).
+    * `:client_capabilities` — `%ClientCapabilities{}` (default: auto-detected from callbacks).
     * `:notification_handler` — pid or `(method, params -> any())` for server notifications.
     * `:request_handlers` — `%{method => callback}` for server-initiated requests
-      (sampling, roots, elicitation).
+      (sampling, roots, elicitation). Prefer the convenience callback options below.
     * `:request_timeout` — default timeout in ms for requests (default: 30_000).
+
+  ## Client Feature Callbacks
+
+  These convenience options automatically set the appropriate capabilities and
+  request handlers. When provided, the client will advertise the corresponding
+  capability during initialization and dispatch server-initiated requests to
+  the callback.
+
+    * `:on_sampling` — `fn(params) -> {:ok, result} | {:error, error}` for
+      `sampling/createMessage` requests. Result should include `"role"`, `"content"`,
+      `"model"`, and `"stopReason"`.
+    * `:on_roots_list` — `fn(params) -> {:ok, result}` for `roots/list` requests.
+      Result should include `"roots"` (list of root maps with `"uri"` and optional `"name"`).
+    * `:on_elicitation` — `fn(params) -> {:ok, result} | {:error, error}` for
+      `elicitation/create` requests. Result should include `"action"` and optional `"content"`.
   """
 
   use GenServer
@@ -34,7 +49,14 @@ defmodule MCP.Client do
   require Logger
 
   alias MCP.Protocol
-  alias MCP.Protocol.Capabilities.ClientCapabilities
+
+  alias MCP.Protocol.Capabilities.{
+    ClientCapabilities,
+    ElicitationCapabilities,
+    RootCapabilities,
+    SamplingCapabilities
+  }
+
   alias MCP.Protocol.Error
   alias MCP.Protocol.Messages.{Initialize, Notification, Request, Response}
   alias MCP.Protocol.Methods
@@ -206,6 +228,26 @@ defmodule MCP.Client do
   end
 
   @doc """
+  Notifies the server that the client's roots have changed.
+
+  The server can then re-request the roots list via `roots/list`.
+  Only meaningful if the client advertised roots capability with `listChanged: true`.
+  """
+  def notify_roots_changed(client) do
+    GenServer.cast(client, :notify_roots_changed)
+  end
+
+  @doc """
+  Cancels a pending request by its ID.
+
+  Sends a `notifications/cancelled` notification to the server with the
+  given request ID and optional reason.
+  """
+  def cancel(client, request_id, reason \\ nil) do
+    GenServer.cast(client, {:cancel_request, request_id, reason})
+  end
+
+  @doc """
   Returns the transport pid (useful for testing with MockTransport).
   """
   def transport(client) do
@@ -276,11 +318,22 @@ defmodule MCP.Client do
   @impl GenServer
   def init(opts) do
     {transport_spec, opts} = Keyword.pop!(opts, :transport)
-    client_info = build_client_info(Keyword.get(opts, :client_info, %{name: "mcp_ex", version: "0.1.0"}))
-    client_capabilities = Keyword.get(opts, :client_capabilities, %ClientCapabilities{})
+
+    client_info =
+      build_client_info(Keyword.get(opts, :client_info, %{name: "mcp_ex", version: "0.1.0"}))
+
     notification_handler = Keyword.get(opts, :notification_handler)
-    request_handlers = Keyword.get(opts, :request_handlers, %{})
     request_timeout = Keyword.get(opts, :request_timeout, @default_request_timeout)
+
+    # Build capabilities and request handlers from convenience callbacks
+    {auto_caps, auto_handlers} = build_from_callbacks(opts)
+
+    # Merge explicit overrides (explicit takes precedence)
+    client_capabilities =
+      Keyword.get(opts, :client_capabilities) || merge_capabilities(auto_caps)
+
+    request_handlers =
+      Map.merge(auto_handlers, Keyword.get(opts, :request_handlers, %{}))
 
     case start_transport(transport_spec) do
       {:ok, module, pid} ->
@@ -306,21 +359,23 @@ defmodule MCP.Client do
 
   @impl GenServer
   def handle_call(:connect, from, %{status: :disconnected} = state) do
-    params = Initialize.Params.to_map(%Initialize.Params{
-      protocol_version: Protocol.protocol_version(),
-      capabilities: state.client_capabilities,
-      client_info: state.client_info
-    })
+    params =
+      Initialize.Params.to_map(%Initialize.Params{
+        protocol_version: Protocol.protocol_version(),
+        capabilities: state.client_capabilities,
+        client_info: state.client_info
+      })
 
     {id, state} = next_id(state)
     send_request(state, id, Methods.initialize(), params)
 
     timeout_ref = schedule_timeout(id, state.request_timeout)
 
-    state = %{state |
-      status: :initializing,
-      connect_from: from,
-      pending_requests: Map.put(state.pending_requests, id, {from, timeout_ref})
+    state = %{
+      state
+      | status: :initializing,
+        connect_from: from,
+        pending_requests: Map.put(state.pending_requests, id, {from, timeout_ref})
     }
 
     {:noreply, state}
@@ -367,19 +422,28 @@ defmodule MCP.Client do
 
   def handle_call({:list_tools, opts}, from, state) do
     params = %{}
-    params = if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
+    params =
+      if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
     send_rpc(state, from, Methods.tools_list(), params)
   end
 
   def handle_call({:call_tool, name, arguments}, from, state) do
     params = %{"name" => name}
-    params = if arguments && arguments != %{}, do: Map.put(params, "arguments", arguments), else: params
+
+    params =
+      if arguments && arguments != %{}, do: Map.put(params, "arguments", arguments), else: params
+
     send_rpc(state, from, Methods.tools_call(), params)
   end
 
   def handle_call({:list_resources, opts}, from, state) do
     params = %{}
-    params = if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
+    params =
+      if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
     send_rpc(state, from, Methods.resources_list(), params)
   end
 
@@ -389,7 +453,10 @@ defmodule MCP.Client do
 
   def handle_call({:list_resource_templates, opts}, from, state) do
     params = %{}
-    params = if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
+    params =
+      if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
     send_rpc(state, from, Methods.resources_templates_list(), params)
   end
 
@@ -403,13 +470,19 @@ defmodule MCP.Client do
 
   def handle_call({:list_prompts, opts}, from, state) do
     params = %{}
-    params = if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
+    params =
+      if cursor = Keyword.get(opts, :cursor), do: Map.put(params, "cursor", cursor), else: params
+
     send_rpc(state, from, Methods.prompts_list(), params)
   end
 
   def handle_call({:get_prompt, name, arguments}, from, state) do
     params = %{"name" => name}
-    params = if arguments && arguments != %{}, do: Map.put(params, "arguments", arguments), else: params
+
+    params =
+      if arguments && arguments != %{}, do: Map.put(params, "arguments", arguments), else: params
+
     send_rpc(state, from, Methods.prompts_get(), params)
   end
 
@@ -431,6 +504,30 @@ defmodule MCP.Client do
 
   def handle_call(:get_server_info, _from, state) do
     {:reply, state.server_info, state}
+  end
+
+  # --- Casts for notifications ---
+
+  @impl GenServer
+  def handle_cast(:notify_roots_changed, %{status: :ready} = state) do
+    send_notification(state, Methods.roots_list_changed())
+    {:noreply, state}
+  end
+
+  def handle_cast(:notify_roots_changed, state) do
+    {:noreply, state}
+  end
+
+  def handle_cast({:cancel_request, request_id, reason}, %{status: status} = state)
+      when status in [:ready, :initializing] do
+    params = %{"requestId" => request_id}
+    params = if reason, do: Map.put(params, "reason", reason), else: params
+    send_notification(state, Methods.cancelled(), params)
+    {:noreply, state}
+  end
+
+  def handle_cast({:cancel_request, _request_id, _reason}, state) do
+    {:noreply, state}
   end
 
   # --- Incoming messages from transport ---
@@ -519,6 +616,58 @@ defmodule MCP.Client do
     end
   end
 
+  defp build_from_callbacks(opts) do
+    caps = %{}
+    handlers = %{}
+
+    {caps, handlers} = maybe_add_sampling(caps, handlers, Keyword.get(opts, :on_sampling))
+    {caps, handlers} = maybe_add_roots(caps, handlers, Keyword.get(opts, :on_roots_list))
+    maybe_add_elicitation(caps, handlers, Keyword.get(opts, :on_elicitation))
+  end
+
+  defp maybe_add_sampling(caps, handlers, nil), do: {caps, handlers}
+
+  defp maybe_add_sampling(caps, handlers, callback) when is_function(callback, 1) do
+    caps = Map.put(caps, :sampling, %SamplingCapabilities{})
+
+    handler = fn _method, params -> callback.(params) end
+    handlers = Map.put(handlers, "sampling/createMessage", handler)
+
+    {caps, handlers}
+  end
+
+  defp maybe_add_roots(caps, handlers, nil), do: {caps, handlers}
+
+  defp maybe_add_roots(caps, handlers, callback) when is_function(callback, 1) do
+    caps = Map.put(caps, :roots, %RootCapabilities{list_changed: true})
+
+    handler = fn _method, params -> callback.(params) end
+    handlers = Map.put(handlers, "roots/list", handler)
+
+    {caps, handlers}
+  end
+
+  defp maybe_add_elicitation(caps, handlers, nil), do: {caps, handlers}
+
+  defp maybe_add_elicitation(caps, handlers, callback) when is_function(callback, 1) do
+    caps = Map.put(caps, :elicitation, %ElicitationCapabilities{form: %{}, url: %{}})
+
+    handler = fn _method, params -> callback.(params) end
+    handlers = Map.put(handlers, "elicitation/create", handler)
+
+    {caps, handlers}
+  end
+
+  defp merge_capabilities(caps) when map_size(caps) == 0, do: %ClientCapabilities{}
+
+  defp merge_capabilities(caps) do
+    %ClientCapabilities{
+      sampling: Map.get(caps, :sampling),
+      roots: Map.get(caps, :roots),
+      elicitation: Map.get(caps, :elicitation)
+    }
+  end
+
   defp build_client_info(%Implementation{} = impl), do: impl
 
   defp build_client_info(map) when is_map(map) do
@@ -534,12 +683,20 @@ defmodule MCP.Client do
 
   defp send_request(state, id, method, params) do
     message = Request.new(id, method, params)
-    state.transport_module.send_message(state.transport_pid, Jason.decode!(Jason.encode!(message)))
+
+    state.transport_module.send_message(
+      state.transport_pid,
+      Jason.decode!(Jason.encode!(message))
+    )
   end
 
   defp send_notification(state, method, params \\ nil) do
     message = Notification.new(method, params)
-    state.transport_module.send_message(state.transport_pid, Jason.decode!(Jason.encode!(message)))
+
+    state.transport_module.send_message(
+      state.transport_pid,
+      Jason.decode!(Jason.encode!(message))
+    )
   end
 
   defp send_rpc(state, from, method, params) do
@@ -593,19 +750,22 @@ defmodule MCP.Client do
     # Send initialized notification
     send_notification(state, Methods.initialized())
 
-    state = %{state |
-      status: :ready,
-      server_capabilities: init_result.capabilities,
-      server_info: init_result.server_info,
-      connect_from: nil
+    state = %{
+      state
+      | status: :ready,
+        server_capabilities: init_result.capabilities,
+        server_info: init_result.server_info,
+        connect_from: nil
     }
 
-    reply = {:ok, %{
-      server_info: init_result.server_info,
-      server_capabilities: init_result.capabilities,
-      protocol_version: init_result.protocol_version,
-      instructions: init_result.instructions
-    }}
+    reply =
+      {:ok,
+       %{
+         server_info: init_result.server_info,
+         server_capabilities: init_result.capabilities,
+         protocol_version: init_result.protocol_version,
+         instructions: init_result.instructions
+       }}
 
     GenServer.reply(from, reply)
     {:noreply, state}

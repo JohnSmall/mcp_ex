@@ -10,13 +10,14 @@ defmodule MCP.ServerTest do
 
     @impl true
     def init(opts) do
-      {:ok, %{
-        tools: Keyword.get(opts, :tools, []),
-        resources: Keyword.get(opts, :resources, []),
-        prompts: Keyword.get(opts, :prompts, []),
-        subscriptions: [],
-        log_level: nil
-      }}
+      {:ok,
+       %{
+         tools: Keyword.get(opts, :tools, []),
+         resources: Keyword.get(opts, :resources, []),
+         prompts: Keyword.get(opts, :prompts, []),
+         subscriptions: [],
+         log_level: nil
+       }}
     end
 
     @impl true
@@ -93,6 +94,7 @@ defmodule MCP.ServerTest do
           %{"role" => "user", "content" => %{"type" => "text", "text" => "Hello!"}}
         ]
       }
+
       {:ok, result, state}
     end
 
@@ -427,7 +429,10 @@ defmodule MCP.ServerTest do
       response = Enum.at(messages, 1)
 
       assert response["result"]["isError"] == true
-      assert response["result"]["content"] == [%{"type" => "text", "text" => "something went wrong"}]
+
+      assert response["result"]["content"] == [
+               %{"type" => "text", "text" => "something went wrong"}
+             ]
     end
 
     test "returns protocol error when handler returns error" do

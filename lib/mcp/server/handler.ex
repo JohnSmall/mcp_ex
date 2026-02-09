@@ -66,7 +66,8 @@ defmodule MCP.Server.Handler do
   Read a resource by URI. Called on `resources/read`.
   """
   @callback handle_read_resource(uri :: String.t(), state()) ::
-              {:ok, contents :: [map()], state()} | {:error, code :: integer(), message :: String.t(), state()}
+              {:ok, contents :: [map()], state()}
+              | {:error, code :: integer(), message :: String.t(), state()}
 
   @doc """
   Subscribe to resource updates. Called on `resources/subscribe`.
@@ -96,7 +97,8 @@ defmodule MCP.Server.Handler do
   Get a specific prompt. Called on `prompts/get`.
   """
   @callback handle_get_prompt(name :: String.t(), arguments :: map() | nil, state()) ::
-              {:ok, result :: map(), state()} | {:error, code :: integer(), message :: String.t(), state()}
+              {:ok, result :: map(), state()}
+              | {:error, code :: integer(), message :: String.t(), state()}
 
   @doc """
   Complete an argument value. Called on `completion/complete`.

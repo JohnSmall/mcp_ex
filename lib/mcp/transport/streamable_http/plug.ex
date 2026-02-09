@@ -95,6 +95,16 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
 
   @impl Plug
   def call(conn, config) do
+    if localhost_request?(conn) do
+      route_method(conn, config)
+    else
+      conn
+      |> Plug.Conn.put_resp_content_type("text/plain")
+      |> Plug.Conn.send_resp(403, "Forbidden: non-localhost origin")
+    end
+  end
+
+  defp route_method(conn, config) do
     case conn.method do
       "POST" -> handle_post(conn, config)
       "GET" -> handle_get(conn, config)
@@ -155,8 +165,13 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
         send_json_error(conn, 400, -32_600, "Bad request", "Missing MCP-Session-Id header")
 
       {:error, {:bad_version, version}} ->
-        send_json_error(conn, 400, -32_000, "Unsupported protocol version",
-          "Unsupported protocol version: #{version}")
+        send_json_error(
+          conn,
+          400,
+          -32_000,
+          "Unsupported protocol version",
+          "Unsupported protocol version: #{version}"
+        )
 
       :not_found ->
         send_json_error(conn, 404, -32_600, "Not found", "Session not found")
@@ -250,7 +265,9 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
     case HTTPTransport.start_link(transport_opts) do
       {:ok, transport_pid} ->
         case start_mcp_server(config, transport_pid) do
-          {:ok, _server_pid} -> {:ok, transport_pid}
+          {:ok, _server_pid} ->
+            {:ok, transport_pid}
+
           {:error, reason} ->
             HTTPTransport.close(transport_pid)
             {:error, reason}
@@ -324,6 +341,7 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
   end
 
   defp maybe_set_session_header(conn, nil), do: conn
+
   defp maybe_set_session_header(conn, session_id) do
     Plug.Conn.put_resp_header(conn, "mcp-session-id", session_id)
   end
@@ -366,5 +384,31 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
     conn
     |> Plug.Conn.put_resp_header("allow", "GET, POST, DELETE")
     |> Plug.Conn.send_resp(405, "")
+  end
+
+  @localhost_patterns ~w(localhost 127.0.0.1 [::1])
+
+  defp localhost_request?(conn) do
+    origin = Plug.Conn.get_req_header(conn, "origin")
+    host = Plug.Conn.get_req_header(conn, "host")
+
+    origin_ok = origin == [] || Enum.any?(origin, &localhost_value?/1)
+    host_ok = host == [] || Enum.any?(host, &localhost_value?/1)
+
+    origin_ok && host_ok
+  end
+
+  defp localhost_value?(value) do
+    # Strip scheme prefix if present
+    host_part =
+      value
+      |> String.replace(~r{^https?://}, "")
+      |> String.split("/")
+      |> hd()
+
+    # Strip port suffix
+    host_without_port = String.replace(host_part, ~r{:\d+$}, "")
+
+    host_without_port in @localhost_patterns
   end
 end
