@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Phase 1 Complete
+- **Status**: Phase 2 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -99,13 +99,13 @@ lib/mcp/
       completion.ex                  # Completion Params/Result
       notifications.ex               # Progress/Cancelled/ResourceUpdated params
 
-  # === Transport Layer (Phase 2 - PLANNED) ===
-  transport.ex                       # Transport behaviour (connect, send, receive, close)
+  # === Transport Layer (Phase 2 - COMPLETE) ===
+  transport.ex                       # Transport behaviour (start_link, send_message, close)
   transport/
-    stdio.ex                         # Port-based stdin/stdout transport
+    stdio.ex                         # Port-based stdin/stdout transport (client + server modes)
     streamable_http/
-      client.ex                      # HTTP POST + SSE client transport (Req)
-      server.ex                      # HTTP POST + SSE server transport (Plug)
+      client.ex                      # HTTP POST + SSE client transport (Req) (Phase 5)
+      server.ex                      # HTTP POST + SSE server transport (Plug) (Phase 5)
 
   # === Client (Phase 3 - PLANNED) ===
   client.ex                          # High-level client API (GenServer)
@@ -125,11 +125,14 @@ lib/mcp/
 ### Transport Behaviour
 
 ```elixir
-@callback connect(opts :: keyword()) :: {:ok, state} | {:error, term()}
-@callback send_message(state, message :: map()) :: {:ok, state} | {:error, term()}
-@callback receive_message(state) :: {:ok, message :: map(), state} | {:error, term()}
-@callback close(state) :: :ok
+@callback start_link(opts :: keyword()) :: GenServer.on_start()
+@callback send_message(pid :: pid(), message :: map()) :: :ok | {:error, term()}
+@callback close(pid :: pid()) :: :ok
 ```
+
+Transports run as GenServer processes. The owner receives messages via:
+- `{:mcp_message, decoded_map}` — incoming JSON-RPC message
+- `{:mcp_transport_closed, reason}` — transport closed/disconnected
 
 ### Stdio Transport
 

@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Phase 1 Complete
+- **Status**: Phase 2 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -118,23 +118,23 @@ mix dialyzer
 
 ### Tasks
 
-- [ ] **2.1** Define transport behaviour (`lib/mcp/transport.ex`)
+- [x] **2.1** Define transport behaviour (`lib/mcp/transport.ex`)
   - `MCP.Transport` behaviour with callbacks:
-    - `connect(opts :: keyword()) :: {:ok, state} | {:error, term()}`
-    - `send_message(state, message :: iodata()) :: {:ok, state} | {:error, term()}`
-    - `close(state) :: :ok`
-  - Transport is responsible for framing (newline for stdio, HTTP for streamable)
-  - Incoming messages delivered via `send/2` to the owner process (GenServer)
-  - Transport runs as a process (GenServer) owned by the client/server
+    - `start_link(opts :: keyword()) :: GenServer.on_start()`
+    - `send_message(pid, message :: map()) :: :ok | {:error, term()}`
+    - `close(pid) :: :ok`
+  - Transport runs as a GenServer process owned by the client/server
+  - Incoming messages delivered via `send(owner, {:mcp_message, decoded})`
+  - Transport closure signaled via `send(owner, {:mcp_transport_closed, reason})`
 
-- [ ] **2.2** Implement stdio transport (`lib/mcp/transport/stdio.ex`)
+- [x] **2.2** Implement stdio transport (`lib/mcp/transport/stdio.ex`)
   - `MCP.Transport.Stdio` — GenServer implementing Transport behaviour
   - **Client mode**: Opens an Erlang Port (`Port.open({:spawn_executable, ...}`) to subprocess
     - Writes: JSON + `\n` to stdin
     - Reads: Newline-delimited JSON from stdout (buffer partial reads)
-    - Stderr: Captured, logged via Logger, NOT parsed as protocol messages
+    - Stderr: Goes to parent process stderr (not protocol)
   - **Server mode**: Reads from `:stdio` (stdin), writes to stdout
-    - Uses `:io.get_line/1` or equivalent for reading
+    - Uses `:io.get_line/1` in a spawned reader process
     - Writes JSON + `\n` to stdout
   - Message framing:
     - Output: `Jason.encode!(message) <> "\n"` — MUST NOT contain embedded newlines
@@ -142,12 +142,15 @@ mix dialyzer
   - Deliver decoded messages to owner process via `send(owner, {:mcp_message, decoded})`
   - Handle Port exit / EOF → notify owner via `send(owner, {:mcp_transport_closed, reason})`
 
-- [ ] **2.3** Write transport test helpers (`test/support/`)
+- [x] **2.3** Write transport test helpers (`test/support/`)
   - `MCP.Test.MockTransport` — In-memory transport for unit testing client/server
     - Collects sent messages in a list
-    - Allows injecting incoming messages
-  - `MCP.Test.EchoServer` — Simple script that echoes JSON-RPC for stdio testing
-  - Helpers for building valid JSON-RPC request/response maps
+    - Allows injecting incoming messages via `inject/2`
+    - Tracks close state via `closed?/1`
+  - `test/support/echo_server.exs` — Simple echo script for stdio testing
+    - Reads newline-delimited JSON from stdin, echoes params in result
+    - Special "exit" method causes shutdown
+  - 10 tests total: 4 MockTransport unit tests + 6 Stdio integration tests
 
 ### Verification
 ```bash
@@ -551,8 +554,8 @@ Phases 3 and 4 can be developed in parallel after Phase 2.
 
 | Phase | New Tests | Running Total |
 |-------|-----------|---------------|
-| Phase 1: Core Protocol | ~40 | 40 |
-| Phase 2: Transport + Stdio | ~20 | 60 |
+| Phase 1: Core Protocol | 93 | 93 |
+| Phase 2: Transport + Stdio | 10 | 103 |
 | Phase 3: Client | ~35 | 95 |
 | Phase 4: Server | ~35 | 130 |
 | Phase 5: Streamable HTTP | ~25 | 155 |
