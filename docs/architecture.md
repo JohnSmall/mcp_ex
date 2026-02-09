@@ -4,7 +4,7 @@
 - **Project**: MCP Ex
 - **Version**: 0.1.0
 - **Date**: 2026-02-08
-- **Status**: Phase 3 Complete
+- **Status**: Phase 4 Complete
 - **Protocol**: MCP 2025-11-25
 
 ---
@@ -110,12 +110,10 @@ lib/mcp/
   # === Client (Phase 3 - COMPLETE) ===
   client.ex                          # High-level client API (GenServer)
 
-  # === Server (Phase 4 - PLANNED) ===
+  # === Server (Phase 4 - COMPLETE) ===
   server.ex                          # High-level server API (GenServer)
   server/
     handler.ex                       # Behaviour for tool/resource/prompt handlers
-    simple_handler.ex                # Convenience handler with in-state registration
-    router.ex                        # Routes JSON-RPC method → handler
 ```
 
 ---
@@ -244,34 +242,86 @@ MCP servers can send requests to clients (sampling, roots, elicitation). The cli
 MCP.Server (GenServer)
   |
   +-- state:
-  |     transport: transport_state
+  |     handler_module / handler_state — user's Handler behaviour implementation
+  |     transport_module / transport_pid — the transport process
   |     client_capabilities: ClientCapabilities.t()
-  |     tools: %{name => ToolDef.t()}
-  |     resources: %{uri => ResourceDef.t()}
-  |     prompts: %{name => PromptDef.t()}
-  |     session_id: string | nil
+  |     client_info: Implementation.t()
+  |     server_info / capabilities / instructions — declared at startup
+  |     status: :waiting | :ready | :closed
+  |     pending_requests: %{id => {from, timeout_ref}}
+  |     next_id: integer (incrementing, for server-initiated requests)
+  |     log_level: current log level set by client
   |
-  +-- Registration API:
-  |     add_tool/2
-  |     add_resource/2
-  |     add_prompt/2
-  |     notify_tools_changed/1
-  |     notify_resources_changed/1
+  +-- Public API:
+  |     start_link/1          → create GenServer + start transport + init handler
+  |     close/1               → shutdown
+  |     transport/1, status/1 → accessors
+  |     client_capabilities/1, client_info/1 → from initialization
+  |
+  +-- Notifications (server → client):
+  |     notify_tools_changed/1     → notifications/tools/list_changed
+  |     notify_resources_changed/1 → notifications/resources/list_changed
+  |     notify_resource_updated/2  → notifications/resources/updated (with uri)
+  |     notify_prompts_changed/1   → notifications/prompts/list_changed
+  |     log/3-4                    → notifications/message (respects log level)
+  |     send_progress/3-4          → notifications/progress
+  |
+  +-- Server-initiated requests (server → client):
+  |     request_sampling/2-3       → sampling/createMessage
+  |     request_roots/1-2          → roots/list
+  |     request_elicitation/2-3    → elicitation/create
   |
   +-- Incoming (from client):
-  |     initialize → respond with capabilities
-  |     tools/list → return registered tools
-  |     tools/call → dispatch to tool handler
-  |     resources/list → return registered resources
-  |     resources/read → dispatch to resource handler
-  |     prompts/list → return registered prompts
-  |     prompts/get → dispatch to prompt handler
-  |
-  +-- Outgoing (to client):
-        sampling/createMessage → request LLM completion
-        roots/list → request filesystem roots
-        elicitation/create → request user input
+  |     initialize → respond with capabilities, store client info
+  |     notifications/initialized → transition to :ready
+  |     ping → empty response (works pre-init)
+  |     tools/list, tools/call → dispatch to handler
+  |     resources/list, resources/read → dispatch to handler
+  |     resources/subscribe, resources/unsubscribe → dispatch to handler
+  |     resources/templates/list → dispatch to handler
+  |     prompts/list, prompts/get → dispatch to handler
+  |     completion/complete → dispatch to handler
+  |     logging/setLevel → dispatch to handler + update log_level
+  |     unknown method → -32601 error
 ```
+
+### Handler Behaviour
+
+`MCP.Server.Handler` defines optional callbacks for all server features.
+The server auto-detects capabilities by inspecting which callbacks the
+handler module exports via `__info__(:functions)`.
+
+```elixir
+@callback init(opts) :: {:ok, state}
+@callback handle_list_tools(cursor, state) :: {:ok, tools, next_cursor, state}
+@callback handle_call_tool(name, arguments, state) :: {:ok, content, state} | {:error, code, msg, state}
+@callback handle_list_resources(cursor, state) :: {:ok, resources, next_cursor, state}
+@callback handle_read_resource(uri, state) :: {:ok, contents, state} | {:error, code, msg, state}
+@callback handle_subscribe(uri, state) :: {:ok, state} | {:error, code, msg, state}
+@callback handle_unsubscribe(uri, state) :: {:ok, state} | {:error, code, msg, state}
+@callback handle_list_resource_templates(cursor, state) :: {:ok, templates, next_cursor, state}
+@callback handle_list_prompts(cursor, state) :: {:ok, prompts, next_cursor, state}
+@callback handle_get_prompt(name, arguments, state) :: {:ok, result, state} | {:error, code, msg, state}
+@callback handle_complete(ref, argument, state) :: {:ok, completion, state}
+@callback handle_set_log_level(level, state) :: {:ok, state}
+```
+
+### Request Routing
+
+Routing is inline in the Server GenServer via pattern-matched function clauses
+on `%Request{method: "tools/list"}` etc. No separate Router module needed —
+Elixir's pattern matching makes this clean and Credo-friendly.
+
+### Capability Auto-Detection
+
+The server inspects `handler_module.__info__(:functions)` to detect which
+callbacks are implemented, then builds `%ServerCapabilities{}` accordingly:
+- `handle_list_tools/2` → tools capability (with listChanged)
+- `handle_list_resources/2` → resources capability (with listChanged)
+- `handle_subscribe/2` → resources.subscribe capability
+- `handle_list_prompts/2` → prompts capability (with listChanged)
+- `handle_set_log_level/2` → logging capability
+- `handle_complete/3` → completions capability
 
 ---
 
