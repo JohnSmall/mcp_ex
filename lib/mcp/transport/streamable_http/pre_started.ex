@@ -35,6 +35,13 @@ defmodule MCP.Transport.StreamableHTTP.PreStarted do
     HTTPTransport.send_message(pid, message)
   end
 
+  @doc """
+  Sends a message with options, delegating to the underlying transport.
+  """
+  def send_message(pid, message, opts) do
+    HTTPTransport.send_message(pid, message, opts)
+  end
+
   @impl MCP.Transport
   def close(pid) do
     HTTPTransport.close(pid)

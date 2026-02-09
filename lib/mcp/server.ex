@@ -63,6 +63,7 @@ defmodule MCP.Server do
   alias MCP.Protocol.Messages.{Initialize, Notification, Request, Response}
   alias MCP.Protocol.Methods
   alias MCP.Protocol.Types.Implementation
+  alias MCP.Server.ToolContext
 
   defstruct [
     :handler_module,
@@ -78,7 +79,9 @@ defmodule MCP.Server do
     :pending_requests,
     :next_id,
     :request_timeout,
-    :log_level
+    :log_level,
+    :has_async_tools,
+    :async_tool_tasks
   ]
 
   @default_request_timeout 30_000
@@ -222,6 +225,7 @@ defmodule MCP.Server do
 
     {handler_module, handler_opts} = handler_spec
     capabilities = detect_capabilities(handler_module)
+    has_async_tools = has_async_tool_handler?(handler_module)
 
     case handler_module.init(handler_opts) do
       {:ok, handler_state} ->
@@ -238,7 +242,9 @@ defmodule MCP.Server do
               status: :waiting,
               pending_requests: %{},
               next_id: 1,
-              request_timeout: request_timeout
+              request_timeout: request_timeout,
+              has_async_tools: has_async_tools,
+              async_tool_tasks: %{}
             }
 
             {:ok, state}
@@ -283,6 +289,20 @@ defmodule MCP.Server do
 
   def handle_call({:request_client, _method, _params}, _from, %{status: status} = state) do
     {:reply, {:error, {:not_ready, status}}, state}
+  end
+
+  # Context calls from async tool handlers
+  def handle_call({:context_notify, related_request_id, method, params}, _from, state) do
+    send_notification(state, method, params, related_request_id: related_request_id)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:context_request, related_request_id, method, params}, from, state) do
+    {id, state} = next_id(state)
+    send_request(state, id, method, params, related_request_id: related_request_id)
+    timeout_ref = schedule_timeout(id, state.request_timeout)
+    state = put_pending(state, id, from, timeout_ref)
+    {:noreply, state}
   end
 
   @impl GenServer
@@ -347,6 +367,33 @@ defmodule MCP.Server do
         {:noreply, %{state | pending_requests: pending}}
 
       {nil, _} ->
+        {:noreply, state}
+    end
+  end
+
+  # Async tool task completion (Task.async sends {ref, result})
+  def handle_info({ref, result}, state) when is_reference(ref) do
+    case find_async_task(state, ref) do
+      {request_id, _task_pid} ->
+        Process.demonitor(ref, [:flush])
+        state = remove_async_task(state, request_id)
+        handle_async_tool_result(request_id, result, state)
+
+      nil ->
+        Logger.debug("MCP Server: unexpected ref message: #{inspect(ref)}")
+        {:noreply, state}
+    end
+  end
+
+  # Task DOWN message (process exited abnormally)
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case find_async_task(state, ref) do
+      {request_id, _task_pid} ->
+        state = remove_async_task(state, request_id)
+        send_error_response(state, request_id, %Error{code: -32_603, message: "Tool execution failed: #{inspect(reason)}"})
+        {:noreply, state}
+
+      nil ->
         {:noreply, state}
     end
   end
@@ -521,7 +568,16 @@ defmodule MCP.Server do
   defp handle_tools_call(id, params, state) do
     name = Map.get(params || %{}, "name", "")
     arguments = Map.get(params || %{}, "arguments", %{})
+    meta = Map.get(params || %{}, "_meta")
 
+    if state.has_async_tools do
+      handle_tools_call_async(id, name, arguments, meta, state)
+    else
+      handle_tools_call_sync(id, name, arguments, state)
+    end
+  end
+
+  defp handle_tools_call_sync(id, name, arguments, state) do
     case state.handler_module.handle_call_tool(name, arguments, state.handler_state) do
       {:ok, content, handler_state} ->
         send_success_response(state, id, %{"content" => content})
@@ -537,6 +593,26 @@ defmodule MCP.Server do
         send_error_response(state, id, %Error{code: code, message: message})
         {:noreply, %{state | handler_state: handler_state}}
     end
+  end
+
+  defp handle_tools_call_async(id, name, arguments, meta, state) do
+    server_pid = self()
+    handler_module = state.handler_module
+    handler_state = state.handler_state
+
+    context = %ToolContext{
+      server_pid: server_pid,
+      request_id: id,
+      meta: meta
+    }
+
+    task =
+      Task.async(fn ->
+        handler_module.handle_call_tool(name, arguments, context, handler_state)
+      end)
+
+    async_tasks = Map.put(state.async_tool_tasks, id, {task.ref, task.pid})
+    {:noreply, %{state | async_tool_tasks: async_tasks}}
   end
 
   defp handle_resources_list(id, params, state) do
@@ -710,40 +786,36 @@ defmodule MCP.Server do
     {state.next_id, %{state | next_id: state.next_id + 1}}
   end
 
-  defp send_request(state, id, method, params) do
+  defp send_request(state, id, method, params, opts \\ []) do
     message = Request.new(id, method, params)
-
-    state.transport_module.send_message(
-      state.transport_pid,
-      Jason.decode!(Jason.encode!(message))
-    )
+    encoded = Jason.decode!(Jason.encode!(message))
+    send_message_to_transport(state, encoded, opts)
   end
 
-  defp send_notification(state, method, params) do
+  defp send_notification(state, method, params, opts \\ []) do
     message = Notification.new(method, params)
-
-    state.transport_module.send_message(
-      state.transport_pid,
-      Jason.decode!(Jason.encode!(message))
-    )
+    encoded = Jason.decode!(Jason.encode!(message))
+    send_message_to_transport(state, encoded, opts)
   end
 
-  defp send_success_response(state, id, result) do
+  defp send_success_response(state, id, result, opts \\ []) do
     response = Response.success(id, result)
-
-    state.transport_module.send_message(
-      state.transport_pid,
-      Jason.decode!(Jason.encode!(response))
-    )
+    encoded = Jason.decode!(Jason.encode!(response))
+    send_message_to_transport(state, encoded, opts)
   end
 
-  defp send_error_response(state, id, %Error{} = error) do
+  defp send_error_response(state, id, %Error{} = error, opts \\ []) do
     response = Response.error(id, error)
+    encoded = Jason.decode!(Jason.encode!(response))
+    send_message_to_transport(state, encoded, opts)
+  end
 
-    state.transport_module.send_message(
-      state.transport_pid,
-      Jason.decode!(Jason.encode!(response))
-    )
+  defp send_message_to_transport(state, message, opts) do
+    if opts != [] && function_exported?(state.transport_module, :send_message, 3) do
+      state.transport_module.send_message(state.transport_pid, message, opts)
+    else
+      state.transport_module.send_message(state.transport_pid, message)
+    end
   end
 
   defp put_pending(state, id, from, timeout_ref) do
@@ -769,6 +841,38 @@ defmodule MCP.Server do
     level_index = Enum.find_index(@log_levels, &(&1 == level)) || 0
     threshold_index = Enum.find_index(@log_levels, &(&1 == threshold)) || 0
     level_index >= threshold_index
+  end
+
+  defp has_async_tool_handler?(handler_module) do
+    {:handle_call_tool, 4} in handler_module.__info__(:functions)
+  end
+
+  defp find_async_task(state, ref) do
+    Enum.find_value(state.async_tool_tasks, fn {request_id, {task_ref, task_pid}} ->
+      if task_ref == ref, do: {request_id, task_pid}
+    end)
+  end
+
+  defp remove_async_task(state, request_id) do
+    %{state | async_tool_tasks: Map.delete(state.async_tool_tasks, request_id)}
+  end
+
+  defp handle_async_tool_result(request_id, result, state) do
+    case result do
+      {:ok, content, handler_state} ->
+        send_success_response(state, request_id, %{"content" => content})
+        {:noreply, %{state | handler_state: handler_state}}
+
+      {:ok, content, is_error, handler_state} ->
+        result_map = %{"content" => content}
+        result_map = if is_error, do: Map.put(result_map, "isError", true), else: result_map
+        send_success_response(state, request_id, result_map)
+        {:noreply, %{state | handler_state: handler_state}}
+
+      {:error, code, message, handler_state} ->
+        send_error_response(state, request_id, %Error{code: code, message: message})
+        {:noreply, %{state | handler_state: handler_state}}
+    end
   end
 
   defp do_close(state) do

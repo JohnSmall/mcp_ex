@@ -8,8 +8,13 @@ defmodule MCP.Transport.StreamableHTTP.Server do
   the MCP.Server. Outgoing messages from the MCP.Server are routed
   back to the appropriate HTTP response.
 
-  This transport is not started directly — it is created by
-  `MCP.Transport.StreamableHTTP.Plug` when a new session is established.
+  Supports two modes for pending requests:
+
+    * **Sync** — the Plug process blocks on `deliver_message/2` waiting
+      for the response. Used for simple request/response.
+    * **Stream** — the Plug process registers as a stream endpoint via
+      `register_stream/3` and receives SSE events asynchronously. Used
+      for tool calls that may send notifications/requests during execution.
 
   ## Options
 
@@ -24,9 +29,12 @@ defmodule MCP.Transport.StreamableHTTP.Server do
 
   @behaviour MCP.Transport
 
+  alias MCP.Transport.SSE
+
   defstruct [
     :owner,
     :session_id,
+    # %{request_id => {:sync, from} | {:stream, stream_pid}}
     :pending_responses,
     :sse_conn
   ]
@@ -40,7 +48,15 @@ defmodule MCP.Transport.StreamableHTTP.Server do
 
   @impl MCP.Transport
   def send_message(pid, message) when is_map(message) do
-    GenServer.call(pid, {:send_message, message})
+    GenServer.call(pid, {:send_message, message, []})
+  end
+
+  @doc """
+  Sends a message with options. Supports `related_request_id` for
+  routing notifications and requests to the correct SSE stream.
+  """
+  def send_message(pid, message, opts) when is_map(message) and is_list(opts) do
+    GenServer.call(pid, {:send_message, message, opts})
   end
 
   @impl MCP.Transport
@@ -51,7 +67,7 @@ defmodule MCP.Transport.StreamableHTTP.Server do
   end
 
   @doc """
-  Delivers an incoming JSON-RPC message to this transport.
+  Delivers an incoming JSON-RPC message to this transport (synchronous).
 
   Called by the Plug when an HTTP POST arrives. For JSON-RPC requests,
   the caller blocks until the MCP.Server sends a response.
@@ -61,6 +77,28 @@ defmodule MCP.Transport.StreamableHTTP.Server do
   """
   def deliver_message(pid, message) do
     GenServer.call(pid, {:deliver_message, message}, 60_000)
+  end
+
+  @doc """
+  Delivers an incoming JSON-RPC message to this transport (async).
+
+  The message is forwarded to the MCP.Server but the caller does
+  not block for a response. Used with `register_stream/3` for
+  SSE streaming mode.
+  """
+  def deliver_message_async(pid, message) do
+    GenServer.cast(pid, {:deliver_message_async, message})
+  end
+
+  @doc """
+  Registers a Plug process as an SSE stream endpoint for a request.
+
+  The Plug process will receive:
+    * `{:sse_event, sse_encoded_data}` — intermediate SSE events
+    * `{:sse_done, sse_encoded_data}` — final response event (stream should close)
+  """
+  def register_stream(pid, request_id, stream_pid) do
+    GenServer.call(pid, {:register_stream, request_id, stream_pid})
   end
 
   @doc """
@@ -90,27 +128,28 @@ defmodule MCP.Transport.StreamableHTTP.Server do
 
   @impl GenServer
   def handle_call({:deliver_message, message}, from, state) do
-    # Determine if this is a request (has an "id" and "method" field)
     is_request = Map.has_key?(message, "id") && Map.has_key?(message, "method")
 
     # Forward to MCP.Server
     send(state.owner, {:mcp_message, message})
 
     if is_request do
-      # Store the caller reference so we can reply when the response comes back
       request_id = Map.get(message, "id")
-      pending = Map.put(state.pending_responses, request_id, from)
+      pending = Map.put(state.pending_responses, request_id, {:sync, from})
       {:noreply, %{state | pending_responses: pending}}
     else
-      # Notifications and responses don't get a reply — immediately accept
       {:reply, :accepted, state}
     end
   end
 
-  def handle_call({:send_message, message}, _from, state) do
-    # MCP.Server is sending a message out (response, notification, or request)
-    state = route_outgoing_message(message, state)
+  def handle_call({:send_message, message, opts}, _from, state) do
+    state = route_outgoing_message(message, opts, state)
     {:reply, :ok, state}
+  end
+
+  def handle_call({:register_stream, request_id, stream_pid}, _from, state) do
+    pending = Map.put(state.pending_responses, request_id, {:stream, stream_pid})
+    {:reply, :ok, %{state | pending_responses: pending}}
   end
 
   def handle_call({:register_sse_conn, conn}, _from, state) do
@@ -122,8 +161,20 @@ defmodule MCP.Transport.StreamableHTTP.Server do
   end
 
   def handle_call(:close, _from, state) do
+    # Notify any remaining stream endpoints
+    Enum.each(state.pending_responses, fn
+      {_id, {:stream, pid}} -> send(pid, {:sse_error, :transport_closed})
+      _ -> :ok
+    end)
+
     send(state.owner, {:mcp_transport_closed, :normal})
     {:stop, :normal, :ok, state}
+  end
+
+  @impl GenServer
+  def handle_cast({:deliver_message_async, message}, state) do
+    send(state.owner, {:mcp_message, message})
+    {:noreply, state}
   end
 
   @impl GenServer
@@ -139,33 +190,64 @@ defmodule MCP.Transport.StreamableHTTP.Server do
 
   # --- Private helpers ---
 
-  defp route_outgoing_message(message, state) do
-    # Check if this is a response (has "id" but no "method")
+  defp route_outgoing_message(message, opts, state) do
     response_id = Map.get(message, "id")
     is_response = response_id != nil && !Map.has_key?(message, "method")
 
     if is_response do
-      # Route to the pending HTTP caller
-      case Map.pop(state.pending_responses, response_id) do
-        {nil, _pending} ->
-          Logger.warning(
-            "MCP StreamableHTTP Server: no pending request for response id=#{inspect(response_id)}"
-          )
-
-          state
-
-        {from, pending} ->
-          GenServer.reply(from, {:ok, message})
-          %{state | pending_responses: pending}
-      end
+      route_response(response_id, message, state)
     else
-      # Server-initiated notification or request — would go to SSE stream
-      # For now, log a warning if no SSE connection is available
+      route_non_response(message, opts, state)
+    end
+  end
+
+  defp route_response(response_id, message, state) do
+    case Map.pop(state.pending_responses, response_id) do
+      {nil, _pending} ->
+        Logger.warning(
+          "MCP StreamableHTTP Server: no pending request for response id=#{inspect(response_id)}"
+        )
+
+        state
+
+      {{:sync, from}, pending} ->
+        GenServer.reply(from, {:ok, message})
+        %{state | pending_responses: pending}
+
+      {{:stream, stream_pid}, pending} ->
+        sse_data = SSE.encode_message(message)
+        send(stream_pid, {:sse_done, sse_data})
+        %{state | pending_responses: pending}
+    end
+  end
+
+  defp route_non_response(message, opts, state) do
+    related_request_id = Keyword.get(opts, :related_request_id)
+
+    if related_request_id do
+      route_to_related_stream(related_request_id, message, state)
+    else
       Logger.debug(
-        "MCP StreamableHTTP Server: server-initiated message (no SSE routing): #{inspect(Map.get(message, "method", "unknown"))}"
+        "MCP StreamableHTTP Server: server-initiated message (no related request): #{inspect(Map.get(message, "method", "unknown"))}"
       )
 
       state
+    end
+  end
+
+  defp route_to_related_stream(related_request_id, message, state) do
+    case Map.get(state.pending_responses, related_request_id) do
+      {:stream, stream_pid} ->
+        sse_data = SSE.encode_message(message)
+        send(stream_pid, {:sse_event, sse_data})
+        state
+
+      _ ->
+        Logger.debug(
+          "MCP StreamableHTTP Server: no stream for related request #{inspect(related_request_id)}"
+        )
+
+        state
     end
   end
 end

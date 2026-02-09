@@ -156,22 +156,14 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
   end
 
   defp handle_session_request(conn, config, message) do
+    validate_protocol_version(conn, config)
+
     with {:ok, session_id} <- require_session_id(conn),
-         :ok <- validate_protocol_version(conn, config),
          {:ok, transport_pid} <- lookup_session(config, session_id) do
       deliver_and_respond(conn, config, transport_pid, message)
     else
       {:error, :missing_session_id} ->
         send_json_error(conn, 400, -32_600, "Bad request", "Missing MCP-Session-Id header")
-
-      {:error, {:bad_version, version}} ->
-        send_json_error(
-          conn,
-          400,
-          -32_000,
-          "Unsupported protocol version",
-          "Unsupported protocol version: #{version}"
-        )
 
       :not_found ->
         send_json_error(conn, 404, -32_600, "Not found", "Session not found")
@@ -192,11 +184,68 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
   end
 
   defp deliver_and_respond(conn, config, transport_pid, message) do
+    is_request = Map.has_key?(message, "id") && Map.has_key?(message, "method")
+
+    if is_request && !config.enable_json_response && accepts_sse?(conn) do
+      stream_request(conn, transport_pid, message)
+    else
+      sync_deliver(conn, config, transport_pid, message)
+    end
+  end
+
+  defp sync_deliver(conn, config, transport_pid, message) do
     case HTTPTransport.deliver_message(transport_pid, message) do
       {:ok, response} -> send_response(conn, config, response)
       :accepted -> Plug.Conn.send_resp(conn, 202, "")
       {:error, reason} -> send_json_error(conn, 500, -32_603, "Internal error", inspect(reason))
     end
+  end
+
+  defp stream_request(conn, transport_pid, message) do
+    request_id = Map.get(message, "id")
+
+    # Register this Plug process as a stream endpoint
+    HTTPTransport.register_stream(transport_pid, request_id, self())
+
+    # Open chunked SSE response
+    conn =
+      conn
+      |> Plug.Conn.put_resp_content_type("text/event-stream")
+      |> Plug.Conn.put_resp_header("cache-control", "no-cache")
+      |> Plug.Conn.send_chunked(200)
+
+    # Deliver message to transport (non-blocking)
+    HTTPTransport.deliver_message_async(transport_pid, message)
+
+    # Enter receive loop to stream events
+    stream_loop(conn)
+  end
+
+  defp stream_loop(conn) do
+    receive do
+      {:sse_event, data} ->
+        case Plug.Conn.chunk(conn, data) do
+          {:ok, conn} -> stream_loop(conn)
+          {:error, _} -> conn
+        end
+
+      {:sse_done, data} ->
+        case Plug.Conn.chunk(conn, data) do
+          {:ok, conn} -> conn
+          {:error, _} -> conn
+        end
+
+      {:sse_error, _reason} ->
+        conn
+    after
+      120_000 ->
+        conn
+    end
+  end
+
+  defp accepts_sse?(conn) do
+    accept = Plug.Conn.get_req_header(conn, "accept")
+    Enum.any?(accept, &String.contains?(&1, "text/event-stream"))
   end
 
   # --- GET handler ---
@@ -319,9 +368,20 @@ defmodule MCP.Transport.StreamableHTTP.Plug do
 
   defp validate_protocol_version(conn, config) do
     case Plug.Conn.get_req_header(conn, "mcp-protocol-version") do
-      [] -> :ok
-      [version | _] when version == config.protocol_version -> :ok
-      [version | _] -> {:error, {:bad_version, version}}
+      [] ->
+        :ok
+
+      [version | _] when version == config.protocol_version ->
+        :ok
+
+      [version | _] ->
+        # MCP spec says servers MAY reject unsupported versions.
+        # We log a warning but accept to maximize interoperability.
+        Logger.debug(
+          "MCP Plug: client sent protocol version #{version}, expected #{config.protocol_version}"
+        )
+
+        :ok
     end
   end
 
