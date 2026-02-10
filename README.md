@@ -360,6 +360,17 @@ capabilities based on which callbacks your handler implements.
 | `handle_complete/3` | `completion/complete` | completions |
 | `handle_set_log_level/2` | `logging/setLevel` | logging |
 
+## Examples
+
+See [mcp_ex_examples](https://github.com/JohnSmall/mcp_ex_examples) for complete, runnable example projects:
+
+| Example | Transport | Description |
+|---------|-----------|-------------|
+| server_example_1 | Stdio | Weather/calculator server with sync tools and resources |
+| server_example_2 | HTTP | Knowledge base server with async tools, prompts, resource templates, and logging |
+| client_example_1 | Both | Basic client connecting to both servers |
+| client_example_2 | Both | Advanced client with sampling callbacks, pagination, and notification handling |
+
 ## Documentation
 
 - [MCP Specification (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25)
