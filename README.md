@@ -267,8 +267,10 @@ defmodule MyAsyncHandler do
     # Report progress
     ToolContext.send_progress(ctx, 0, 100)
 
-    # Request LLM sampling from the client
-    {:ok, llm_result} = ToolContext.request_sampling(ctx, %{
+    # Request LLM sampling from the client.
+    # The server's request_timeout (default 30s) ensures this returns
+    # even if the client can't respond (see "Sampling over HTTP" note below).
+    sampling_result = ToolContext.request_sampling(ctx, %{
       "messages" => [
         %{
           "role" => "user",
@@ -284,7 +286,16 @@ defmodule MyAsyncHandler do
     ToolContext.send_progress(ctx, 100, 100)
     ToolContext.log(ctx, "info", "Analysis complete")
 
-    analysis = llm_result["content"]["text"]
+    analysis =
+      case sampling_result do
+        {:ok, result} ->
+          result["content"]["text"]
+
+        {:error, _reason} ->
+          # Fallback when sampling is unavailable or times out
+          "Static analysis: #{language} code, #{String.length(code)} characters"
+      end
+
     {:ok, [%{"type" => "text", "text" => analysis}], state}
   end
 
@@ -338,6 +349,23 @@ plug_config = MCP.Transport.StreamableHTTP.Plug.init(
 
 IO.puts("MCP server running at http://localhost:8080/mcp")
 ```
+
+### Sampling over HTTP
+
+When using `ToolContext.request_sampling/2` over the Streamable HTTP transport,
+be aware that the client's `Req.post` is synchronous — it blocks until the
+entire SSE response stream completes. This means the client cannot process or
+respond to the server's sampling request while the `tools/call` POST is still
+in flight, so the sampling request will always time out.
+
+The server's `request_timeout` option (default: 30 seconds) acts as a safety
+net: after the timeout, `request_sampling` returns `{:error, :timeout}` and the
+tool handler can continue with a fallback. Always handle the error case in your
+tool handler as shown in the example above.
+
+With the **stdio transport**, sampling works bidirectionally since messages flow
+independently on stdin/stdout — the client can respond to the sampling request
+while still waiting for the tool result.
 
 ## Handler Behaviour Reference
 
