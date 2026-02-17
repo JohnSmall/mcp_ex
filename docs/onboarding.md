@@ -27,28 +27,28 @@ The ADK integration is a thin adapter: `ADK.Tool.McpToolset` in `adk_ex` wraps `
 
 | Resource | Location |
 |----------|----------|
-| **This package** | `/workspace/mcp_ex/` |
+| **This package** | `/workspace/elixir_code/mcp_ex/` |
 | **MCP Spec (2025-11-25)** | https://modelcontextprotocol.io/specification/2025-11-25 |
 | **TypeScript schema (source of truth)** | https://github.com/modelcontextprotocol/specification/blob/main/schema/2025-11-25/schema.ts |
-| **Go SDK (primary reference)** | `/workspace/mcp-go-sdk/` |
-| **Python SDK** | `/workspace/mcp-python-sdk/` |
-| **Ruby SDK** | `/workspace/mcp-ruby-sdk/` |
-| **TypeScript SDK** | `/workspace/mcp-typescript-sdk/` |
-| **Conformance tests** | `/workspace/mcp-conformance/` |
-| **ADK package** | `/workspace/adk_ex/` |
-| **ADK Ecto package** | `/workspace/adk_ex_ecto/` |
-| **CLAUDE.md** | `/workspace/mcp_ex/CLAUDE.md` |
-| **PRD** | `/workspace/mcp_ex/docs/prd.md` |
-| **Architecture** | `/workspace/mcp_ex/docs/architecture.md` |
-| **Implementation Plan** | `/workspace/mcp_ex/docs/implementation-plan.md` |
+| **Go SDK (primary reference)** | `/workspace/samples/mcp-go-sdk/` |
+| **Python SDK** | `/workspace/samples/mcp-python-sdk/` |
+| **Ruby SDK** | `/workspace/samples/mcp-ruby-sdk/` |
+| **TypeScript SDK** | `/workspace/samples/mcp-typescript-sdk/` |
+| **Conformance tests** | `/workspace/samples/mcp-conformance/` |
+| **ADK package** | `/workspace/elixir_code/adk_ex/` |
+| **ADK Ecto package** | `/workspace/elixir_code/adk_ex_ecto/` |
+| **CLAUDE.md** | `/workspace/elixir_code/mcp_ex/CLAUDE.md` |
+| **PRD** | `/workspace/elixir_code/mcp_ex/docs/prd.md` |
+| **Architecture** | `/workspace/elixir_code/mcp_ex/docs/architecture.md` |
+| **Implementation Plan** | `/workspace/elixir_code/mcp_ex/docs/implementation-plan.md` |
 
 Clone reference SDKs before starting:
 ```bash
-git clone https://github.com/modelcontextprotocol/go-sdk /workspace/mcp-go-sdk
-git clone https://github.com/modelcontextprotocol/python-sdk /workspace/mcp-python-sdk
-git clone https://github.com/modelcontextprotocol/ruby-sdk /workspace/mcp-ruby-sdk
-git clone https://github.com/modelcontextprotocol/typescript-sdk /workspace/mcp-typescript-sdk
-git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-conformance
+git clone https://github.com/modelcontextprotocol/go-sdk /workspace/samples/mcp-go-sdk
+git clone https://github.com/modelcontextprotocol/python-sdk /workspace/samples/mcp-python-sdk
+git clone https://github.com/modelcontextprotocol/ruby-sdk /workspace/samples/mcp-ruby-sdk
+git clone https://github.com/modelcontextprotocol/typescript-sdk /workspace/samples/mcp-typescript-sdk
+git clone https://github.com/modelcontextprotocol/conformance /workspace/samples/mcp-conformance
 ```
 
 ---
@@ -262,7 +262,7 @@ These are the most important constraints from the MCP spec. Violating any of the
 ## 8. Reference SDK Patterns
 
 ### Go SDK (Primary Reference)
-Located at `/workspace/mcp-go-sdk/`. Well-structured, most complete.
+Located at `/workspace/samples/mcp-go-sdk/`. Well-structured, most complete.
 
 Key files to study:
 - `mcp/types.go` — All MCP type definitions
@@ -280,12 +280,12 @@ Patterns to adapt:
 - Go's `ServerTool` bundles tool definition + handler; our Handler behaviour separates them
 
 ### Python SDK
-Located at `/workspace/mcp-python-sdk/`. Uses decorators and async/await.
+Located at `/workspace/samples/mcp-python-sdk/`. Uses decorators and async/await.
 - Good for understanding the protocol flow
 - Decorator-based tool registration (`@server.tool()`)
 
 ### Ruby SDK
-Located at `/workspace/mcp-ruby-sdk/`. Built by Shopify, clean OOP patterns.
+Located at `/workspace/samples/mcp-ruby-sdk/`. Built by Shopify, clean OOP patterns.
 - Good for understanding the server handler pattern
 - Uses blocks for tool handlers
 
@@ -295,7 +295,7 @@ Located at `/workspace/mcp-ruby-sdk/`. Built by Shopify, clean OOP patterns.
 
 ### Getting Started
 ```bash
-cd /workspace/mcp_ex
+cd /workspace/elixir_code/mcp_ex
 mix deps.get
 mix test
 mix credo

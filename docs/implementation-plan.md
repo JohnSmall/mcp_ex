@@ -15,11 +15,11 @@ The implementation is organized into 7 phases, each building on the previous. Ea
 
 **Reference SDKs** (clone locally before starting):
 ```bash
-git clone https://github.com/modelcontextprotocol/go-sdk /workspace/mcp-go-sdk
-git clone https://github.com/modelcontextprotocol/python-sdk /workspace/mcp-python-sdk
-git clone https://github.com/modelcontextprotocol/ruby-sdk /workspace/mcp-ruby-sdk
-git clone https://github.com/modelcontextprotocol/typescript-sdk /workspace/mcp-typescript-sdk
-git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-conformance
+git clone https://github.com/modelcontextprotocol/go-sdk /workspace/samples/mcp-go-sdk
+git clone https://github.com/modelcontextprotocol/python-sdk /workspace/samples/mcp-python-sdk
+git clone https://github.com/modelcontextprotocol/ruby-sdk /workspace/samples/mcp-ruby-sdk
+git clone https://github.com/modelcontextprotocol/typescript-sdk /workspace/samples/mcp-typescript-sdk
+git clone https://github.com/modelcontextprotocol/conformance /workspace/samples/mcp-conformance
 ```
 
 ---
@@ -32,7 +32,7 @@ git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-con
 
 ### Tasks
 
-- [x] **1.1** Create Mix project at `/workspace/mcp_ex`
+- [x] **1.1** Create Mix project at `/workspace/elixir_code/mcp_ex`
   - `mix new mcp_ex --sup`
   - Configure mix.exs with deps: jason, elixir_uuid, dialyxir, credo, ex_doc
   - Set Elixir >= 1.17, OTP >= 26
@@ -104,9 +104,9 @@ mix dialyzer
 ```
 
 ### Go SDK Reference
-- Types: `/workspace/mcp-go-sdk/mcp/types.go`
-- Messages: `/workspace/mcp-go-sdk/mcp/mcp.go`
-- Protocol: `/workspace/mcp-go-sdk/internal/jsonrpc/`
+- Types: `/workspace/samples/mcp-go-sdk/mcp/types.go`
+- Messages: `/workspace/samples/mcp-go-sdk/mcp/mcp.go`
+- Protocol: `/workspace/samples/mcp-go-sdk/internal/jsonrpc/`
 
 ---
 
@@ -160,8 +160,8 @@ mix dialyzer
 ```
 
 ### Go SDK Reference
-- Transport interface: `/workspace/mcp-go-sdk/mcp/transport.go`
-- Stdio transport: `/workspace/mcp-go-sdk/mcp/stdio.go`
+- Transport interface: `/workspace/samples/mcp-go-sdk/mcp/transport.go`
+- Stdio transport: `/workspace/samples/mcp-go-sdk/mcp/stdio.go`
 
 ---
 
@@ -223,8 +223,8 @@ mix dialyzer
 ```
 
 ### Go SDK Reference
-- Client: `/workspace/mcp-go-sdk/mcp/client.go`
-- Client session: `/workspace/mcp-go-sdk/mcp/client_session.go`
+- Client: `/workspace/samples/mcp-go-sdk/mcp/client.go`
+- Client session: `/workspace/samples/mcp-go-sdk/mcp/client_session.go`
 
 ---
 
@@ -286,8 +286,8 @@ mix dialyzer
 ```
 
 ### Go SDK Reference
-- Server: `/workspace/mcp-go-sdk/mcp/server.go`
-- Server session: `/workspace/mcp-go-sdk/mcp/server_session.go`
+- Server: `/workspace/samples/mcp-go-sdk/mcp/server.go`
+- Server session: `/workspace/samples/mcp-go-sdk/mcp/server_session.go`
 
 ---
 
@@ -350,7 +350,7 @@ mix dialyzer
 ```
 
 ### Go SDK Reference
-- Streamable HTTP: `/workspace/mcp-go-sdk/mcp/sse.go`, `/workspace/mcp-go-sdk/mcp/streamable_http.go`
+- Streamable HTTP: `/workspace/samples/mcp-go-sdk/mcp/sse.go`, `/workspace/samples/mcp-go-sdk/mcp/streamable_http.go`
 
 ---
 
@@ -422,8 +422,8 @@ npx @modelcontextprotocol/conformance test --server "..."   # Conformance
 ```
 
 ### Go SDK Reference
-- Conformance: `/workspace/mcp-conformance/`
-- SDK integration guide: `/workspace/mcp-conformance/SDK_INTEGRATION.md`
+- Conformance: `/workspace/samples/mcp-conformance/`
+- SDK integration guide: `/workspace/samples/mcp-conformance/SDK_INTEGRATION.md`
 
 ---
 
@@ -537,17 +537,17 @@ Phases 3 and 4 can be developed in parallel after Phase 2.
 
 | Component | Go Source |
 |-----------|----------|
-| Protocol types | `/workspace/mcp-go-sdk/mcp/types.go` |
-| JSON-RPC messages | `/workspace/mcp-go-sdk/mcp/mcp.go` |
-| Transport interface | `/workspace/mcp-go-sdk/mcp/transport.go` |
-| Stdio transport | `/workspace/mcp-go-sdk/mcp/stdio.go` |
-| Streamable HTTP | `/workspace/mcp-go-sdk/mcp/streamable_http.go` |
-| SSE utilities | `/workspace/mcp-go-sdk/mcp/sse.go` |
-| Client | `/workspace/mcp-go-sdk/mcp/client.go` |
-| Client session | `/workspace/mcp-go-sdk/mcp/client_session.go` |
-| Server | `/workspace/mcp-go-sdk/mcp/server.go` |
-| Server session | `/workspace/mcp-go-sdk/mcp/server_session.go` |
-| Conformance integration | `/workspace/mcp-conformance/SDK_INTEGRATION.md` |
+| Protocol types | `/workspace/samples/mcp-go-sdk/mcp/types.go` |
+| JSON-RPC messages | `/workspace/samples/mcp-go-sdk/mcp/mcp.go` |
+| Transport interface | `/workspace/samples/mcp-go-sdk/mcp/transport.go` |
+| Stdio transport | `/workspace/samples/mcp-go-sdk/mcp/stdio.go` |
+| Streamable HTTP | `/workspace/samples/mcp-go-sdk/mcp/streamable_http.go` |
+| SSE utilities | `/workspace/samples/mcp-go-sdk/mcp/sse.go` |
+| Client | `/workspace/samples/mcp-go-sdk/mcp/client.go` |
+| Client session | `/workspace/samples/mcp-go-sdk/mcp/client_session.go` |
+| Server | `/workspace/samples/mcp-go-sdk/mcp/server.go` |
+| Server session | `/workspace/samples/mcp-go-sdk/mcp/server_session.go` |
+| Conformance integration | `/workspace/samples/mcp-conformance/SDK_INTEGRATION.md` |
 
 ---
 

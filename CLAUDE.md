@@ -7,13 +7,13 @@ Elixir implementation of the [Model Context Protocol](https://modelcontextprotoc
 MCP is an open protocol that enables standardized integration between LLM applications and external data sources and tools. It uses JSON-RPC 2.0 over pluggable transports (stdio, Streamable HTTP).
 
 **Related packages**:
-- `adk_ex` at `/workspace/adk_ex/` — Elixir ADK (Agent Development Kit). Will use `mcp_ex` client via an `ADK.Tool.McpToolset` adapter.
-- `adk_ex_ecto` at `/workspace/adk_ex_ecto/` — Ecto-backed sessions for ADK.
+- `adk_ex` at `/workspace/elixir_code/adk_ex/` — Elixir ADK (Agent Development Kit). Will use `mcp_ex` client via an `ADK.Tool.McpToolset` adapter.
+- `adk_ex_ecto` at `/workspace/elixir_code/adk_ex_ecto/` — Ecto-backed sessions for ADK.
 
 ## Quick Start
 
 ```bash
-cd /workspace/mcp_ex
+cd /workspace/elixir_code/mcp_ex
 mix deps.get
 mix test
 mix credo
@@ -32,18 +32,18 @@ mix dialyzer
 
 | SDK | Location | Notes |
 |-----|----------|-------|
-| **Go SDK (PRIMARY)** | `/workspace/mcp-go-sdk/` | Official Go SDK, most complete, well-structured |
-| **Python SDK** | `/workspace/mcp-python-sdk/` | Official Python SDK, decorator-based API |
-| **Ruby SDK** | `/workspace/mcp-ruby-sdk/` | Official Ruby SDK (Shopify), good OOP patterns |
-| **TypeScript SDK** | `/workspace/mcp-typescript-sdk/` | Reference implementation |
+| **Go SDK (PRIMARY)** | `/workspace/samples/mcp-go-sdk/` | Official Go SDK, most complete, well-structured |
+| **Python SDK** | `/workspace/samples/mcp-python-sdk/` | Official Python SDK, decorator-based API |
+| **Ruby SDK** | `/workspace/samples/mcp-ruby-sdk/` | Official Ruby SDK (Shopify), good OOP patterns |
+| **TypeScript SDK** | `/workspace/samples/mcp-typescript-sdk/` | Reference implementation |
 
 **GitHub repos to clone:**
 ```bash
-git clone https://github.com/modelcontextprotocol/go-sdk /workspace/mcp-go-sdk
-git clone https://github.com/modelcontextprotocol/python-sdk /workspace/mcp-python-sdk
-git clone https://github.com/modelcontextprotocol/ruby-sdk /workspace/mcp-ruby-sdk
-git clone https://github.com/modelcontextprotocol/typescript-sdk /workspace/mcp-typescript-sdk
-git clone https://github.com/modelcontextprotocol/conformance /workspace/mcp-conformance
+git clone https://github.com/modelcontextprotocol/go-sdk /workspace/samples/mcp-go-sdk
+git clone https://github.com/modelcontextprotocol/python-sdk /workspace/samples/mcp-python-sdk
+git clone https://github.com/modelcontextprotocol/ruby-sdk /workspace/samples/mcp-ruby-sdk
+git clone https://github.com/modelcontextprotocol/typescript-sdk /workspace/samples/mcp-typescript-sdk
+git clone https://github.com/modelcontextprotocol/conformance /workspace/samples/mcp-conformance
 ```
 
 ## Protocol Version
